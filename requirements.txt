@@ -1,0 +1,5 @@
+langchain
+chainlit
+python-dotenv
+wikipedia
+duckduckgo-search
