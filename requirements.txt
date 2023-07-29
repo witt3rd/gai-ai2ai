@@ -1,5 +1,5 @@
 langchain
-chainlit
+gradio
 python-dotenv
 wikipedia
 duckduckgo-search
