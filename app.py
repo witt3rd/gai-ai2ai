@@ -1,17 +1,17 @@
 import os
+from typing import Literal
 
 from dotenv import load_dotenv
 
-from langchain import PromptTemplate
 from langchain.agents import ConversationalChatAgent, load_tools, AgentExecutor
 from langchain.callbacks import StreamlitCallbackHandler
 from langchain.chat_models import ChatOpenAI
-from langchain.prompts import MessagesPlaceholder
 from langchain.memory import ConversationSummaryBufferMemory
-from langchain.schema import SystemMessage, HumanMessage, AIMessage
+from langchain.schema import OutputParserException
 
 import streamlit as st
 from streamlit_chat import message
+
 
 #
 # Load environment variables
@@ -24,16 +24,16 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 #
 # Streamlit app
 #
-st.set_page_config(page_title="ai2ai", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="Red v Blue", page_icon="🤖", layout="wide")
 
 col1, col2 = st.columns([0.2, 0.8])
 with col1:
     st.markdown(
-        '<img src="./app/static/bot-talk.png" height="100" style="">',
+        '<img src="./app/static/red-v-blue.png" height="100" style="">',
         unsafe_allow_html=True,
     )
 with col2:
-    st.write("### ai2ai")
+    st.write("### :red[Red] v :blue[Blue]")
     st.write("Human-mediated AI agent-to-agent chat")
 
 st.divider()
@@ -42,55 +42,73 @@ st.divider()
 #     + "[![Follow](https://img.shields.io/twitter/follow/dt_public?style=social)](https://www.twitter.com/dt_public)"
 # )
 
-with st.expander("Agent Configuration", expanded=True):
+speakers = {"Red": "red_agent", "Blue": "blue_agent"}
+if "first_speaker" not in st.session_state:
+    st.session_state["first_speaker"] = "Red"
+
+with st.expander("Dialog Configuration", expanded=True):
     with st.form("agent_config"):
         col1, col2 = st.columns(2)
 
         with col1:
-            agent_1_directive = st.text_area(
-                "Agent 1 Directive",
-            )
+            red_directive = st.text_area(":red[🤖 Red Directive]")
 
         with col2:
-            agent_2_directive = st.text_area("Agent 2 Directive")
+            blue_directive = st.text_area(":blue[🤖 Blue Directive]")
+
+        speaker = st.selectbox("First speaker", list(speakers.keys()), index=0)
 
         update = st.form_submit_button("Update", use_container_width=True)
         if update:
             # Validate
-            if not agent_1_directive:
-                st.error("Agent 1 Directive is required")
+            if not red_directive:
+                st.error("Red directive is required")
                 st.stop()
-            if not agent_2_directive:
-                st.error("Agent 2 Directive is required")
+            if not blue_directive:
+                st.error("Blue directive is required")
                 st.stop()
 
             # Update the state
             has_changed = False
             if (
-                "agent_1_directive" in st.session_state
-                and st.session_state["agent_1_directive"] != agent_1_directive
-            ) or "agent_1_directive" not in st.session_state:
+                "red_directive" in st.session_state
+                and st.session_state["red_directive"] != red_directive
+            ) or "red_directive" not in st.session_state:
                 has_changed = True
-                st.session_state["agent_1_directive"] = agent_1_directive
-            if (
-                "agent_2_directive" in st.session_state
-                and st.session_state["agent_2_directive"] != agent_2_directive
-            ) or "agent_2_directive" not in st.session_state:
-                has_changed = True
-                st.session_state["agent_2_directive"] = agent_2_directive
+                st.session_state["red_directive"] = red_directive
 
+            if (
+                "blue_directive" in st.session_state
+                and st.session_state["blue_directive"] != blue_directive
+            ) or "blue_directive" not in st.session_state:
+                has_changed = True
+                st.session_state["blue_directive"] = blue_directive
+
+            if (
+                "first_speaker" in st.session_state
+                and st.session_state["first_speaker"] != speaker
+            ) or "first_speaker" not in st.session_state:
+                has_changed = True
+                st.session_state["first_speaker"] = speaker
+
+            # if anything has changed, reset the session state
             if has_changed:
-                del st.session_state["agent_1"]
-                del st.session_state["agent_2"]
-                del st.session_state["chat_history"]
+                if "red_agent" in st.session_state:
+                    del st.session_state["red_agent"]
+                if "blue_agent" in st.session_state:
+                    del st.session_state["blue_agent"]
+                if "chat_history" in st.session_state:
+                    del st.session_state["chat_history"]
+                if "memory" in st.session_state:
+                    del st.session_state["memory"]
+                if "response" in st.session_state:
+                    del st.session_state["response"]
+                st.session_state["speaker"] = st.session_state["first_speaker"]
                 st.success("Updated")
             else:
                 st.info("No changes")
 
-if (
-    not "agent_1_directive" in st.session_state
-    or not "agent_2_directive" in st.session_state
-):
+if not "red_directive" in st.session_state or not "blue_directive" in st.session_state:
     st.stop()
 
 #
@@ -100,6 +118,7 @@ if (
 if "llm" not in st.session_state:
     llm = ChatOpenAI(
         model="gpt-4",
+        temperature=0.0,
     )
     st.session_state["llm"] = llm
 
@@ -111,7 +130,7 @@ if "memory" not in st.session_state:
     memory = ConversationSummaryBufferMemory(
         memory_key="chat_history",
         return_messages=True,
-        llm=llm,
+        llm=st.session_state["llm"],
         max_token_limit=1000,
     )
     st.session_state["memory"] = memory
@@ -119,69 +138,79 @@ if "memory" not in st.session_state:
 
 def create_agent(name: str):
     directive = st.session_state[f"{name}_directive"]
-    print(f"Directive: {directive}")
     agent = ConversationalChatAgent.from_llm_and_tools(
         llm=st.session_state["llm"],
         tools=st.session_state["tools"],
         system_message=directive,
     )
-    print(f"Prompt: {agent.llm_chain.prompt}")
     agent_chain = AgentExecutor.from_agent_and_tools(
         agent=agent,
         tools=st.session_state["tools"],
         verbose=True,
         memory=st.session_state["memory"],
     )
-    print(f"Created agent: {name}")
-    st.session_state[name] = agent_chain
+    st.session_state[f"{name}_agent"] = agent_chain
 
 
-if "agent_1" not in st.session_state:
-    create_agent("agent_1")
+if "red_agent" not in st.session_state:
+    create_agent("red")
 
-if "agent_2" not in st.session_state:
-    create_agent("agent_2")
+if "blue_agent" not in st.session_state:
+    create_agent("blue")
 
 if "chat_history" not in st.session_state:
     st.session_state["chat_history"] = []
 
 #
-# Render
+# Chat history
 #
-talker = st.selectbox("Agent", ["Agent 1", "Agent 2"])
 
-if prompt := st.chat_input():
-    with st.spinner("Thinking..."):
-        st_callback = StreamlitCallbackHandler(st.container())
 
-        agent = (
-            st.session_state["agent_1"]
-            if talker == "Agent 1"
-            else st.session_state["agent_2"]
-        )
-        if not agent:
-            st.error("Agent not found")
-            st.stop()
-        response = agent.run(input=prompt, callbacks=[st_callback])
+def speaker_color(speaker) -> Literal["red", "blue"]:
+    color = "red" if speaker == "Red" else "blue"
+    return color
 
-    turn = {
-        "prompt": prompt,
-        "response": response,
-    }
-    st.session_state["chat_history"].append(turn)
 
+print(f'Render: {st.session_state["chat_history"]}')
 for i in range(len(st.session_state["chat_history"])):
     turn = st.session_state["chat_history"][i]
-    message(
-        turn["prompt"],
-        key=str(i),
-        is_user=True,
-        avatar_style="lorelei-neutral",
-        seed="Harley",
+    speaker = turn["speaker"]
+    color = speaker_color(speaker)
+    st.text_area(
+        f":{color}[{speaker}]",
+        value=turn["content"],
+        key=f"chat_history_{i}",
     )
 
-    message(
-        turn["response"],
-        key=str(i) + "_ai",
-        is_user=False,
+
+with st.form("chat_input"):
+    speaker = st.session_state["speaker"]
+    responder = "Red" if speaker == "Blue" else "Blue"
+    print(f"speaker: {speaker}, responder: {responder}")
+    responder_agent = st.session_state[speakers[responder]]
+
+    color = speaker_color(speaker)
+    prompt = st.text_area(
+        f":{color}[{speaker}]",
+        value=st.session_state["response"] if "response" in st.session_state else "",
     )
+    submit = st.form_submit_button("Send", use_container_width=True)
+    if submit:
+        st.session_state["chat_history"].append({"speaker": speaker, "content": prompt})
+        print(st.session_state["chat_history"])
+        with st.spinner("Thinking..."):
+            st_callback = StreamlitCallbackHandler(st.container())
+
+            try:
+                response = responder_agent.run(input=prompt, callbacks=[st_callback])
+            except OutputParserException as e:
+                response = str(e)
+                prefix = "Could not parse LLM output: "
+                if not response.startswith(prefix):
+                    raise e
+                response = response.removeprefix(prefix)
+
+            st.session_state["response"] = response
+            st.session_state["speaker"] = responder
+
+            st.experimental_rerun()
