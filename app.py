@@ -6,8 +6,9 @@ from dotenv import load_dotenv
 from langchain.agents import ConversationalChatAgent, load_tools, AgentExecutor
 from langchain.callbacks import StreamlitCallbackHandler
 from langchain.chat_models import ChatOpenAI
-from langchain.memory import ConversationSummaryBufferMemory
-from langchain.schema import OutputParserException
+from langchain.memory import ChatMessageHistory, ConversationSummaryBufferMemory
+from langchain.memory import ConversationBufferMemory
+from langchain.schema import AIMessage, HumanMessage, OutputParserException
 
 import streamlit as st
 from streamlit_chat import message
@@ -42,7 +43,19 @@ st.divider()
 #     + "[![Follow](https://img.shields.io/twitter/follow/dt_public?style=social)](https://www.twitter.com/dt_public)"
 # )
 
-speakers = {"Red": "red_agent", "Blue": "blue_agent"}
+speakers = {"Red": "Red_agent", "Blue": "Blue_agent"}
+
+
+def speaker_color(speaker) -> Literal["red", "blue"]:
+    color = "red" if speaker == "Red" else "blue"
+    return color
+
+
+def other_speaker(speaker) -> Literal["Red", "Blue"]:
+    other = "Red" if speaker == "Blue" else "Blue"
+    return other
+
+
 if "first_speaker" not in st.session_state:
     st.session_state["first_speaker"] = "Red"
 
@@ -71,18 +84,18 @@ with st.expander("Dialog Configuration", expanded=True):
             # Update the state
             has_changed = False
             if (
-                "red_directive" in st.session_state
-                and st.session_state["red_directive"] != red_directive
-            ) or "red_directive" not in st.session_state:
+                "Red_directive" in st.session_state
+                and st.session_state["Red_directive"] != red_directive
+            ) or "Red_directive" not in st.session_state:
                 has_changed = True
-                st.session_state["red_directive"] = red_directive
+                st.session_state["Red_directive"] = red_directive
 
             if (
-                "blue_directive" in st.session_state
-                and st.session_state["blue_directive"] != blue_directive
-            ) or "blue_directive" not in st.session_state:
+                "Blue_directive" in st.session_state
+                and st.session_state["Blue_directive"] != blue_directive
+            ) or "Blue_directive" not in st.session_state:
                 has_changed = True
-                st.session_state["blue_directive"] = blue_directive
+                st.session_state["Blue_directive"] = blue_directive
 
             if (
                 "first_speaker" in st.session_state
@@ -93,16 +106,18 @@ with st.expander("Dialog Configuration", expanded=True):
 
             # if anything has changed, reset the session state
             if has_changed:
-                if "red_agent" in st.session_state:
-                    del st.session_state["red_agent"]
-                if "blue_agent" in st.session_state:
-                    del st.session_state["blue_agent"]
+                if "Red_agent" in st.session_state:
+                    del st.session_state["Red_agent"]
+                if "Blue_agent" in st.session_state:
+                    del st.session_state["Blue_agent"]
                 if "chat_history" in st.session_state:
                     del st.session_state["chat_history"]
-                if "memory" in st.session_state:
-                    del st.session_state["memory"]
                 if "response" in st.session_state:
                     del st.session_state["response"]
+                if "llm" in st.session_state:
+                    del st.session_state["llm"]
+                if "memory" in st.session_state:
+                    del st.session_state["memory"]
                 st.session_state["speaker"] = st.session_state["first_speaker"]
                 st.success("Updated")
             else:
@@ -115,29 +130,48 @@ if not "red_directive" in st.session_state or not "blue_directive" in st.session
 # Session state
 #
 
-if "llm" not in st.session_state:
-    llm = ChatOpenAI(
-        model="gpt-4",
-        temperature=0.0,
-    )
-    st.session_state["llm"] = llm
-
 if "tools" not in st.session_state:
     tools = load_tools(["ddg-search"])
     st.session_state["tools"] = tools
 
+if "llm" not in st.session_state:
+    llm = ChatOpenAI(
+        model="gpt-4",
+        temperature=0.7,
+        verbose=True,
+    )
+    st.session_state["llm"] = llm
+
+if "chat_history" not in st.session_state:
+    st.session_state["chat_history"] = ChatMessageHistory()
+
 if "memory" not in st.session_state:
-    memory = ConversationSummaryBufferMemory(
+    human_prefix = st.session_state["first_speaker"]
+    ai_prefix = "Red" if human_prefix == "Blue" else "Blue"
+
+    memory = ConversationBufferMemory(
         memory_key="chat_history",
         return_messages=True,
-        llm=st.session_state["llm"],
-        max_token_limit=1000,
+        human_prefix=human_prefix,
+        ai_prefix=ai_prefix,
     )
+
+    # memory = ConversationSummaryBufferMemory(
+    #     memory_key="chat_history",
+    #     return_messages=True,
+    #     llm=st.session_state["llm"],
+    #     max_token_limit=3000,
+    #     human_prefix=human_prefix,
+    #     ai_prefix=ai_prefix,
+    # )
     st.session_state["memory"] = memory
 
 
-def create_agent(name: str):
-    directive = st.session_state[f"{name}_directive"]
+def create_agent(name: str) -> None:
+    directive = (
+        f"You are {name}. You are talking to {other_speaker(name)}. "
+        + st.session_state[f"{name}_directive"]
+    )
     agent = ConversationalChatAgent.from_llm_and_tools(
         llm=st.session_state["llm"],
         tools=st.session_state["tools"],
@@ -152,42 +186,38 @@ def create_agent(name: str):
     st.session_state[f"{name}_agent"] = agent_chain
 
 
-if "red_agent" not in st.session_state:
-    create_agent("red")
+if "Red_agent" not in st.session_state:
+    create_agent("Red")
 
-if "blue_agent" not in st.session_state:
-    create_agent("blue")
+if "Blue_agent" not in st.session_state:
+    create_agent("Blue")
 
-if "chat_history" not in st.session_state:
-    st.session_state["chat_history"] = []
 
 #
 # Chat history
 #
 
+messages = st.session_state["chat_history"].messages
+for i in range(len(messages)):
+    message = messages[i]
 
-def speaker_color(speaker) -> Literal["red", "blue"]:
-    color = "red" if speaker == "Red" else "blue"
-    return color
-
-
-print(f'Render: {st.session_state["chat_history"]}')
-for i in range(len(st.session_state["chat_history"])):
-    turn = st.session_state["chat_history"][i]
-    speaker = turn["speaker"]
+    if type(message) == HumanMessage:
+        speaker = st.session_state["first_speaker"]
+    else:
+        speaker = other_speaker(st.session_state["first_speaker"])
     color = speaker_color(speaker)
     st.text_area(
         f":{color}[{speaker}]",
-        value=turn["content"],
+        value=message.content,
         key=f"chat_history_{i}",
     )
 
 
 with st.form("chat_input"):
     speaker = st.session_state["speaker"]
-    responder = "Red" if speaker == "Blue" else "Blue"
-    print(f"speaker: {speaker}, responder: {responder}")
+    responder = other_speaker(speaker)
     responder_agent = st.session_state[speakers[responder]]
+    print(f"Memory: {responder_agent.memory}")
 
     color = speaker_color(speaker)
     prompt = st.text_area(
@@ -196,11 +226,13 @@ with st.form("chat_input"):
     )
     submit = st.form_submit_button("Send", use_container_width=True)
     if submit:
-        st.session_state["chat_history"].append({"speaker": speaker, "content": prompt})
-        print(st.session_state["chat_history"])
+        chat_history = st.session_state["chat_history"]
+        if speaker == st.session_state["first_speaker"]:
+            chat_history.add_user_message(prompt)
+        else:
+            chat_history.add_ai_message(prompt)
         with st.spinner("Thinking..."):
             st_callback = StreamlitCallbackHandler(st.container())
-
             try:
                 response = responder_agent.run(input=prompt, callbacks=[st_callback])
             except OutputParserException as e:
