@@ -1,5 +1,8 @@
-langchain
-gradio
-python-dotenv
-wikipedia
 duckduckgo-search
+langchain
+openai
+python-dotenv
+streamlit
+streamlit_chat
+tiktoken
+wikipedia
