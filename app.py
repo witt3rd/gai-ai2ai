@@ -2,16 +2,53 @@ import os
 from typing import Literal
 
 from dotenv import load_dotenv
+from pydantic import BaseModel
 
 from langchain.agents import ConversationalChatAgent, load_tools, AgentExecutor
 from langchain.callbacks import StreamlitCallbackHandler
 from langchain.chat_models import ChatOpenAI
 from langchain.memory import ChatMessageHistory, ConversationSummaryBufferMemory
 from langchain.memory import ConversationBufferMemory
-from langchain.schema import AIMessage, HumanMessage, OutputParserException
+from langchain.schema import (
+    AIMessage,
+    BaseMemory,
+    HumanMessage,
+    OutputParserException,
+)
 
 import streamlit as st
 from streamlit_chat import message
+
+#
+# Custom memory that is shared between two agents
+#
+
+
+class SharedMemory(BaseMemory, BaseModel):
+    """Memory class for storing information about entities."""
+
+    chat_history: ChatMessageHistory = ChatMessageHistory()
+
+    # Define key to pass information about entities into prompt.
+    memory_key: str = "chat_history"
+
+    def clear(self):
+        self.chat_history = ChatMessageHistory()
+
+    @property
+    def memory_variables(self) -> list[str]:
+        """Define the variables we are providing to the prompt."""
+        return [self.memory_key]
+
+    def load_memory_variables(self, inputs: dict[str, any]) -> dict[str, str]:
+        """Load the memory variables, in this case the entity key."""
+        # print(f"Loading memory variables: {inputs}")
+        return {self.memory_key: self.chat_history.messages}
+
+    def save_context(self, inputs: dict[str, any], outputs: dict[str, str]) -> None:
+        """Save context from this conversation to buffer."""
+        # text = inputs[list(inputs.keys())[0]]
+        # print(f"Saving context: {inputs} -> {outputs}")
 
 
 #
@@ -64,10 +101,16 @@ with st.expander("Dialog Configuration", expanded=True):
         col1, col2 = st.columns(2)
 
         with col1:
-            red_directive = st.text_area(":red[🤖 Red Directive]")
+            red_directive = st.text_area(
+                ":red[🤖 Red Directive]",
+                value="Answer every question you are asked with in a single sentence.  End every response with '- RED'",
+            )
 
         with col2:
-            blue_directive = st.text_area(":blue[🤖 Blue Directive]")
+            blue_directive = st.text_area(
+                ":blue[🤖 Blue Directive]",
+                value="You are intensely curious about subjects, but you have no knowledge yourself. Only ever ask questions. Never make statements.  End every response with '- BLUE'",
+            )
 
         speaker = st.selectbox("First speaker", list(speakers.keys()), index=0)
 
@@ -142,19 +185,21 @@ if "llm" not in st.session_state:
     )
     st.session_state["llm"] = llm
 
-if "chat_history" not in st.session_state:
-    st.session_state["chat_history"] = ChatMessageHistory()
-
 if "memory" not in st.session_state:
     human_prefix = st.session_state["first_speaker"]
     ai_prefix = "Red" if human_prefix == "Blue" else "Blue"
 
-    memory = ConversationBufferMemory(
-        memory_key="chat_history",
+    memory = SharedMemory(
         return_messages=True,
         human_prefix=human_prefix,
         ai_prefix=ai_prefix,
     )
+    # memory = ConversationBufferMemory(
+    #     memory_key="chat_history",
+    #     return_messages=True,
+    #     human_prefix=human_prefix,
+    #     ai_prefix=ai_prefix,
+    # )
 
     # memory = ConversationSummaryBufferMemory(
     #     memory_key="chat_history",
@@ -197,7 +242,7 @@ if "Blue_agent" not in st.session_state:
 # Chat history
 #
 
-messages = st.session_state["chat_history"].messages
+messages = st.session_state["memory"].chat_history.messages
 for i in range(len(messages)):
     message = messages[i]
 
@@ -213,11 +258,19 @@ for i in range(len(messages)):
     )
 
 
+def add_message(speaker, content):
+    chat_history = st.session_state["memory"].chat_history
+    if speaker == st.session_state["first_speaker"]:
+        chat_history.add_user_message(content)
+    else:
+        chat_history.add_ai_message(content)
+
+
 with st.form("chat_input"):
     speaker = st.session_state["speaker"]
     responder = other_speaker(speaker)
     responder_agent = st.session_state[speakers[responder]]
-    print(f"Memory: {responder_agent.memory}")
+    # print(f"Memory: {responder_agent.memory}")
 
     color = speaker_color(speaker)
     prompt = st.text_area(
@@ -226,11 +279,7 @@ with st.form("chat_input"):
     )
     submit = st.form_submit_button("Send", use_container_width=True)
     if submit:
-        chat_history = st.session_state["chat_history"]
-        if speaker == st.session_state["first_speaker"]:
-            chat_history.add_user_message(prompt)
-        else:
-            chat_history.add_ai_message(prompt)
+        add_message(speaker, prompt)
         with st.spinner("Thinking..."):
             st_callback = StreamlitCallbackHandler(st.container())
             try:
