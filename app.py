@@ -1,3 +1,4 @@
+import json
 import os
 from typing import Literal
 
@@ -60,6 +61,14 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 #
+# Scenario library
+#
+
+with open("scenario_library.json", "r") as f:
+    scenario_library = json.load(f)
+
+
+#
 # Streamlit app
 #
 st.set_page_config(page_title="Red v Blue", page_icon="🤖", layout="wide")
@@ -80,7 +89,7 @@ st.divider()
 #     + "[![Follow](https://img.shields.io/twitter/follow/dt_public?style=social)](https://www.twitter.com/dt_public)"
 # )
 
-speakers = {"Red": "Red_agent", "Blue": "Blue_agent"}
+speakers = ["Red", "Blue"]
 
 
 def speaker_color(speaker) -> Literal["red", "blue"]:
@@ -93,85 +102,145 @@ def other_speaker(speaker) -> Literal["Red", "Blue"]:
     return other
 
 
-if "first_speaker" not in st.session_state:
-    st.session_state["first_speaker"] = "Red"
+# Reset the chat on first speaker change
+def reset_dialog() -> None:
+    if "speaker" in st.session_state:
+        del st.session_state["speaker"]
+    if "Red" in st.session_state:
+        del st.session_state["Red"]
+    if "Blue" in st.session_state:
+        del st.session_state["Blue"]
+    if "memory" in st.session_state:
+        del st.session_state["memory"]
+    if "response" in st.session_state:
+        del st.session_state["response"]
 
-with st.expander("Dialog Configuration", expanded=True):
-    with st.form("agent_config"):
+
+if "current_scenario_key" not in st.session_state:
+    st.session_state["current_scenario_key"] = scenario_library["current_scenario_key"]
+
+with st.expander("Directives", expanded=True):
+    current_scenario_key = st.session_state["current_scenario_key"]
+    current_scenario = scenario_library["scenarios"][current_scenario_key]
+    first_speaker = current_scenario["first_speaker"]
+    scenarios = list(scenario_library["scenarios"])
+    bots = list(scenario_library["bots"])
+
+    st.selectbox(
+        "Scenario",
+        scenarios,
+        key="current_scenario_key",
+        index=scenarios.index(current_scenario_key),
+        on_change=reset_dialog,
+    )
+
+    with st.container():
         col1, col2 = st.columns(2)
 
         with col1:
-            red_directive = st.text_area(
+            st.selectbox(
+                ":red[🤖 Red Bot]",
+                bots,
+                key="red_bot",
+                index=bots.index(current_scenario["Red"]),
+                on_change=reset_dialog,
+            )
+            st.text_area(
                 ":red[🤖 Red Directive]",
-                value="Answer every question you are asked with in a single sentence.  End every response with '- RED'",
+                value=scenario_library["bots"][st.session_state["red_bot"]],
+                key="red_directive",
+                on_change=reset_dialog,
             )
 
         with col2:
-            blue_directive = st.text_area(
+            st.selectbox(
+                ":blue[🤖 Blue Bot]",
+                bots,
+                key="blue_bot",
+                index=bots.index(current_scenario["Blue"]),
+                on_change=reset_dialog,
+            )
+            st.text_area(
                 ":blue[🤖 Blue Directive]",
-                value="You are intensely curious about subjects, but you have no knowledge yourself. Only ever ask questions. Never make statements.  End every response with '- BLUE'",
+                value=scenario_library["bots"][st.session_state["blue_bot"]],
+                key="blue_directive",
+                on_change=reset_dialog,
             )
 
-        speaker = st.selectbox("First speaker", list(speakers.keys()), index=0)
+        st.selectbox(
+            "First speaker",
+            speakers,
+            index=speakers.index(first_speaker),
+            key="first_speaker",
+            on_change=reset_dialog,
+        )
 
-        update = st.form_submit_button("Update", use_container_width=True)
-        if update:
-            # Validate
-            if not red_directive:
-                st.error("Red directive is required")
-                st.stop()
-            if not blue_directive:
-                st.error("Blue directive is required")
-                st.stop()
+        # update = st.form_submit_button("Update", use_container_width=True)
+        # if update:
+        #     # Validate
+        #     if not st.session_state["red_directive"]:
+        #         st.error("Red directive is required")
+        #         st.stop()
+        #     if not st.session_state["blue_directive"]:
+        #         st.error("Blue directive is required")
+        #         st.stop()
 
-            # Update the state
-            has_changed = False
-            if (
-                "Red_directive" in st.session_state
-                and st.session_state["Red_directive"] != red_directive
-            ) or "Red_directive" not in st.session_state:
-                has_changed = True
-                st.session_state["Red_directive"] = red_directive
+        # # Update the state
+        # has_changed = False
+        # if (
+        #     "red_directive" in st.session_state
+        #     and st.session_state["red_directive"] != red_directive
+        # ) or "red_directive" not in st.session_state:
+        #     has_changed = True
+        #     st.session_state["red_directive"] = red_directive
 
-            if (
-                "Blue_directive" in st.session_state
-                and st.session_state["Blue_directive"] != blue_directive
-            ) or "Blue_directive" not in st.session_state:
-                has_changed = True
-                st.session_state["Blue_directive"] = blue_directive
+        # if (
+        #     "blue_directive" in st.session_state
+        #     and st.session_state["blue_directive"] != blue_directive
+        # ) or "blue_directive" not in st.session_state:
+        #     has_changed = True
+        #     st.session_state["blue_directive"] = blue_directive
 
-            if (
-                "first_speaker" in st.session_state
-                and st.session_state["first_speaker"] != speaker
-            ) or "first_speaker" not in st.session_state:
-                has_changed = True
-                st.session_state["first_speaker"] = speaker
+        # if (
+        #     "first_speaker" in st.session_state
+        #     and st.session_state["first_speaker"] != speaker
+        # ) or "first_speaker" not in st.session_state:
+        #     has_changed = True
+        #     st.session_state["first_speaker"] = speaker
+        # has_changed = True
 
-            # if anything has changed, reset the session state
-            if has_changed:
-                if "Red_agent" in st.session_state:
-                    del st.session_state["Red_agent"]
-                if "Blue_agent" in st.session_state:
-                    del st.session_state["Blue_agent"]
-                if "chat_history" in st.session_state:
-                    del st.session_state["chat_history"]
-                if "response" in st.session_state:
-                    del st.session_state["response"]
-                if "llm" in st.session_state:
-                    del st.session_state["llm"]
-                if "memory" in st.session_state:
-                    del st.session_state["memory"]
-                st.session_state["speaker"] = st.session_state["first_speaker"]
-                st.success("Updated")
-            else:
-                st.info("No changes")
+        # # if anything has changed, reset the session state
+        # if has_changed:
+        #     if "Red" in st.session_state:
+        #         del st.session_state["Red"]
+        #     if "Blue" in st.session_state:
+        #         del st.session_state["Blue"]
+        #     if "chat_history" in st.session_state:
+        #         del st.session_state["chat_history"]
+        #     if "response" in st.session_state:
+        #         del st.session_state["response"]
+        #     if "llm" in st.session_state:
+        #         del st.session_state["llm"]
+        #     if "memory" in st.session_state:
+        #         del st.session_state["memory"]
+        #     st.session_state["speaker"] = st.session_state["first_speaker"]
+        #     st.success("Updated")
+        # else:
+        #     st.info("No changes")
 
-if not "red_directive" in st.session_state or not "blue_directive" in st.session_state:
-    st.stop()
+# if not "red_directive" in st.session_state or not "blue_directive" in st.session_state:
+#     st.stop()
 
 #
 # Session state
 #
+if "speaker" not in st.session_state:
+    st.session_state["speaker"] = st.session_state["first_speaker"]
+
+if "response" not in st.session_state:
+    current_scenario_key = st.session_state["current_scenario_key"]
+    current_scenario = scenario_library["scenarios"][current_scenario_key]
+    st.session_state["response"] = current_scenario["prompt"]
 
 if "tools" not in st.session_state:
     tools = load_tools(["ddg-search"])
@@ -215,7 +284,7 @@ if "memory" not in st.session_state:
 def create_agent(name: str) -> None:
     directive = (
         f"You are {name}. You are talking to {other_speaker(name)}. "
-        + st.session_state[f"{name}_directive"]
+        + st.session_state[f"{name.lower()}_directive"]
     )
     agent = ConversationalChatAgent.from_llm_and_tools(
         llm=st.session_state["llm"],
@@ -228,13 +297,13 @@ def create_agent(name: str) -> None:
         verbose=True,
         memory=st.session_state["memory"],
     )
-    st.session_state[f"{name}_agent"] = agent_chain
+    st.session_state[name] = agent_chain
 
 
-if "Red_agent" not in st.session_state:
+if "Red" not in st.session_state:
     create_agent("Red")
 
-if "Blue_agent" not in st.session_state:
+if "Blue" not in st.session_state:
     create_agent("Blue")
 
 
@@ -269,14 +338,10 @@ def add_message(speaker, content):
 with st.form("chat_input"):
     speaker = st.session_state["speaker"]
     responder = other_speaker(speaker)
-    responder_agent = st.session_state[speakers[responder]]
-    # print(f"Memory: {responder_agent.memory}")
+    responder_agent = st.session_state[responder]
 
     color = speaker_color(speaker)
-    prompt = st.text_area(
-        f":{color}[{speaker}]",
-        value=st.session_state["response"] if "response" in st.session_state else "",
-    )
+    prompt = st.text_area(f":{color}[{speaker}]", value=st.session_state["response"])
     submit = st.form_submit_button("Send", use_container_width=True)
     if submit:
         add_message(speaker, prompt)
