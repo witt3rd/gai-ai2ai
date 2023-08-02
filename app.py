@@ -1,3 +1,4 @@
+from datetime import datetime
 import json
 import os
 from typing import Literal
@@ -59,6 +60,7 @@ class SharedMemory(BaseMemory, BaseModel):
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+DATA_DIR = os.getenv("DATA_DIR", "./data")
 
 #
 # Scenario library
@@ -66,6 +68,59 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 with open("scenario_library.json", "r") as f:
     scenario_library = json.load(f)
+
+#
+# Chat sessions
+#
+
+
+def session_create(
+    scenario: str,
+    red_bot: str,
+    red_directive: str,
+    blue_bot: str,
+    blue_directive: str,
+    first_speaker: str,
+) -> (str, dict[str, any]):
+    session = {
+        "scenario": scenario,
+        "red_bot": red_bot,
+        "red_directive": red_directive,
+        "blue_bot": blue_bot,
+        "blue_directive": blue_directive,
+        "first_speaker": first_speaker,
+        "messages": [],
+    }
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    session_file = os.path.join(DATA_DIR, timestamp + ".json")
+    session_write(session_file, session)
+
+    return session_file, session
+
+
+def session_write(
+    session_file: str,
+    session: dict[str, any],
+) -> None:
+    if not os.path.exists(DATA_DIR):
+        os.mkdir(DATA_DIR)
+    with open(session_file, "w") as f:
+        json.dump(session, f, indent=2)
+
+
+def session_add_message(
+    session_file: str,
+    session: dict[str, any],
+    speaker: str,
+    message: str,
+) -> None:
+    session["messages"].append(
+        {
+            "speaker": speaker,
+            "message": message,
+        }
+    )
+    session_write(session_file, session)
 
 
 #
@@ -280,6 +335,19 @@ if "memory" not in st.session_state:
     # )
     st.session_state["memory"] = memory
 
+    # we can use the creation of memory as a trigger to create
+    # a new session
+    session_file, session = session_create(
+        scenario=st.session_state["current_scenario_key"],
+        red_bot=st.session_state["red_bot"],
+        red_directive=st.session_state["red_directive"],
+        blue_bot=st.session_state["blue_bot"],
+        blue_directive=st.session_state["blue_directive"],
+        first_speaker=st.session_state["first_speaker"],
+    )
+    st.session_state["session_file"] = session_file
+    st.session_state["session"] = session
+
 
 def create_agent(name: str) -> None:
     directive = (
@@ -327,12 +395,19 @@ for i in range(len(messages)):
     )
 
 
-def add_message(speaker, content):
+def add_message(speaker, message) -> None:
     chat_history = st.session_state["memory"].chat_history
     if speaker == st.session_state["first_speaker"]:
-        chat_history.add_user_message(content)
+        chat_history.add_user_message(message)
     else:
-        chat_history.add_ai_message(content)
+        chat_history.add_ai_message(message)
+
+    session_add_message(
+        session_file=st.session_state["session_file"],
+        session=st.session_state["session"],
+        speaker=speaker,
+        message=message,
+    )
 
 
 with st.form("chat_input"):
