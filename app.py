@@ -9,30 +9,110 @@ from pydantic import BaseModel
 from langchain.agents import ConversationalChatAgent, load_tools, AgentExecutor
 from langchain.callbacks import StreamlitCallbackHandler, get_openai_callback
 from langchain.chat_models import ChatOpenAI
-from langchain.memory import ChatMessageHistory, ConversationSummaryBufferMemory
-from langchain.memory import ConversationBufferMemory
+from langchain.llms import OpenAI
+from langchain.memory import ChatMessageHistory
 from langchain.schema import (
-    AIMessage,
     BaseMemory,
     HumanMessage,
     OutputParserException,
 )
+from langchain.schema.language_model import BaseLanguageModel
 
 import streamlit as st
 from streamlit_chat import message
+
+#
+# Load environment variables
+#
+
+load_dotenv()
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+DATA_DIR = os.getenv("DATA_DIR", "./data")
+
+
+#
+# Helpers
+#
+
+
+def generate_string_from_messages(messages: list[dict[str, str]]) -> str:
+    message_string = ""
+
+    for message in messages:
+        speaker = message.get("speaker")
+        message_text = message.get("message")
+        message_string += f"### {speaker}: {message_text}"
+
+    return message_string
+
 
 #
 # Custom memory that is shared between two agents
 #
 
 
-class SharedMemory(BaseMemory, BaseModel):
-    """Memory class for storing information about entities."""
+class Message(BaseModel):
+    speaker: str
+    message: str
+
+    def __str__(self) -> str:
+        return f"### {speaker}: {message}"
+
+
+class Session(BaseModel):
+    scenario: str
+    red_bot: str
+    red_directive: str
+    blue_bot: str
+    blue_directive: str
+    first_speaker: str
+    tokens: int = 0
+    cost: float = 0.0
+    messages: list[Message] = []
+
+
+class SessionMemory(BaseMemory):
+    return_messages: bool = True
 
     chat_history: ChatMessageHistory = ChatMessageHistory()
-
-    # Define key to pass information about entities into prompt.
     memory_key: str = "chat_history"
+    llm: BaseLanguageModel = None
+    session_file: str = None
+    session: Session = None
+    transcript: str = ""
+
+    def __init__(
+        self,
+        human_prefix: str,
+        ai_prefix: str,
+        scenario: str,
+        red_bot: str,
+        red_directive: str,
+        blue_bot: str,
+        blue_directive: str,
+        first_speaker: str,
+    ) -> None:
+        super().__init__(
+            human_prefix=human_prefix,
+            ai_prefix=ai_prefix,
+        )
+        self.llm = OpenAI()
+        self.session = Session(
+            scenario=scenario,
+            red_bot=red_bot,
+            red_directive=red_directive,
+            blue_bot=blue_bot,
+            blue_directive=blue_directive,
+            first_speaker=first_speaker,
+        )
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.session_file = os.path.join(DATA_DIR, f"{scenario} {timestamp}.json")
+        self.session_write()
+
+    #
+    # Boilerplate
+    #
 
     def clear(self):
         self.chat_history = ChatMessageHistory()
@@ -52,15 +132,30 @@ class SharedMemory(BaseMemory, BaseModel):
         # text = inputs[list(inputs.keys())[0]]
         # print(f"Saving context: {inputs} -> {outputs}")
 
+    #
+    # Sessions
+    #
 
-#
-# Load environment variables
-#
+    def session_write(
+        self,
+    ) -> None:
+        if not os.path.exists(DATA_DIR):
+            os.mkdir(DATA_DIR)
+        with open(self.session_file, "w") as f:
+            json.dump(self.session.dict(), f, indent=2)
 
-load_dotenv()
+    def add_message(self, speaker, message) -> None:
+        m = Message(speaker=speaker, message=message)
+        self.transcript += str(m)
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-DATA_DIR = os.getenv("DATA_DIR", "./data")
+        if speaker == st.session_state["first_speaker"]:
+            self.chat_history.add_user_message(message)
+        else:
+            self.chat_history.add_ai_message(message)
+
+        self.session.messages.append(m)
+        self.session_write()
+
 
 #
 # Scenario library
@@ -68,61 +163,6 @@ DATA_DIR = os.getenv("DATA_DIR", "./data")
 
 with open("scenario_library.json", "r") as f:
     scenario_library = json.load(f)
-
-#
-# Chat sessions
-#
-
-
-def session_create(
-    scenario: str,
-    red_bot: str,
-    red_directive: str,
-    blue_bot: str,
-    blue_directive: str,
-    first_speaker: str,
-) -> (str, dict[str, any]):
-    session = {
-        "scenario": scenario,
-        "red_bot": red_bot,
-        "red_directive": red_directive,
-        "blue_bot": blue_bot,
-        "blue_directive": blue_directive,
-        "first_speaker": first_speaker,
-        "tokens": 0,
-        "cost": 0.0,
-        "messages": [],
-    }
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    session_file = os.path.join(DATA_DIR, f"{scenario} {timestamp}.json")
-    session_write(session_file, session)
-
-    return session_file, session
-
-
-def session_write(
-    session_file: str,
-    session: dict[str, any],
-) -> None:
-    if not os.path.exists(DATA_DIR):
-        os.mkdir(DATA_DIR)
-    with open(session_file, "w") as f:
-        json.dump(session, f, indent=2)
-
-
-def session_add_message(
-    session_file: str,
-    session: dict[str, any],
-    speaker: str,
-    message: str,
-) -> None:
-    session["messages"].append(
-        {
-            "speaker": speaker,
-            "message": message,
-        }
-    )
-    session_write(session_file, session)
 
 
 #
@@ -163,27 +203,31 @@ def other_speaker(speaker) -> Literal["Red", "Blue"]:
     return other
 
 
-# Reset the chat on first speaker change
 def reset_dialog(save_session: bool = True) -> None:
-    if "session" in st.session_state and save_session:
-        session_write(
-            session_file=st.session_state["session_file"],
-            session=st.session_state["session"],
-        )
+    # commit the final response, if possible
+    if (
+        "speaker" in st.session_state
+        and "response" in st.session_state
+        and "memory" in st.session_state
+    ):
+        speaker = st.session_state["speaker"]
+        response = st.session_state["response"]
+        memory = st.session_state["memory"]
+        memory.add_message(speaker, response)
+
+    # clean up session state
     if "speaker" in st.session_state:
         del st.session_state["speaker"]
     if "Red" in st.session_state:
         del st.session_state["Red"]
     if "Blue" in st.session_state:
         del st.session_state["Blue"]
-    if "memory" in st.session_state:
-        del st.session_state["memory"]
     if "response" in st.session_state:
         del st.session_state["response"]
-    if "session" in st.session_state:
-        del st.session_state["session"]
-    if "session_file" in st.session_state:
-        del st.session_state["session_file"]
+    if "memory" in st.session_state:
+        memory = st.session_state["memory"]
+        memory.session_write()
+        del st.session_state["memory"]
 
 
 if "current_scenario_key" not in st.session_state:
@@ -330,10 +374,15 @@ if "memory" not in st.session_state:
     human_prefix = st.session_state["first_speaker"]
     ai_prefix = "Red" if human_prefix == "Blue" else "Blue"
 
-    memory = SharedMemory(
-        return_messages=True,
+    memory = SessionMemory(
         human_prefix=human_prefix,
         ai_prefix=ai_prefix,
+        scenario=st.session_state["current_scenario_key"],
+        red_bot=st.session_state["red_bot"],
+        red_directive=st.session_state["red_directive"],
+        blue_bot=st.session_state["blue_bot"],
+        blue_directive=st.session_state["blue_directive"],
+        first_speaker=st.session_state["first_speaker"],
     )
     # memory = ConversationBufferMemory(
     #     memory_key="chat_history",
@@ -351,19 +400,6 @@ if "memory" not in st.session_state:
     #     ai_prefix=ai_prefix,
     # )
     st.session_state["memory"] = memory
-
-    # we can use the creation of memory as a trigger to create
-    # a new session
-    session_file, session = session_create(
-        scenario=st.session_state["current_scenario_key"],
-        red_bot=st.session_state["red_bot"],
-        red_directive=st.session_state["red_directive"],
-        blue_bot=st.session_state["blue_bot"],
-        blue_directive=st.session_state["blue_directive"],
-        first_speaker=st.session_state["first_speaker"],
-    )
-    st.session_state["session_file"] = session_file
-    st.session_state["session"] = session
 
 
 def create_agent(name: str) -> None:
@@ -412,21 +448,6 @@ for i in range(len(messages)):
     )
 
 
-def add_message(speaker, message) -> None:
-    chat_history = st.session_state["memory"].chat_history
-    if speaker == st.session_state["first_speaker"]:
-        chat_history.add_user_message(message)
-    else:
-        chat_history.add_ai_message(message)
-
-    session_add_message(
-        session_file=st.session_state["session_file"],
-        session=st.session_state["session"],
-        speaker=speaker,
-        message=message,
-    )
-
-
 with st.form("chat_input"):
     speaker = st.session_state["speaker"]
     responder = other_speaker(speaker)
@@ -436,16 +457,16 @@ with st.form("chat_input"):
     prompt = st.text_area(f":{color}[{speaker}]", value=st.session_state["response"])
     submit = st.form_submit_button("Send", use_container_width=True)
 
-    session = st.session_state["session"]
-
+    memory = st.session_state["memory"]
+    session = memory.session
     with st.expander("Statistics"):
         col1, col2 = st.columns(2)
         with col1:
-            st.text(f"Session Tokens: {session['tokens']}")
+            st.text(f"Session Tokens: {session.tokens}")
         with col2:
-            st.text(f"Session Cost: {session['cost']:.3f}")
+            st.text(f"Session Cost: {session.cost:.3f}")
     if submit:
-        add_message(speaker, prompt)
+        memory.add_message(speaker, prompt)
         with st.spinner("Thinking..."):
             st_callback = StreamlitCallbackHandler(st.container())
             with get_openai_callback() as cb:
@@ -461,8 +482,8 @@ with st.form("chat_input"):
                         raise e
                     response = response.removeprefix(prefix)
 
-                session["tokens"] = cb.total_tokens
-                session["cost"] = cb.total_cost
+                session.tokens += cb.total_tokens
+                session.cost += cb.total_cost
 
             st.session_state["response"] = response
             st.session_state["speaker"] = responder
