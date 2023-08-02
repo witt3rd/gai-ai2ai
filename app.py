@@ -168,21 +168,30 @@ with open("scenario_library.json", "r") as f:
 #
 # Streamlit app
 #
+
 st.set_page_config(
     page_title="Red v Blue",
     page_icon="🤖",
     layout="wide",
 )
 
-col1, col2 = st.columns([0.2, 0.8])
-with col1:
-    st.markdown(
-        '<img src="./app/static/red-v-blue.png" height="100" style="">',
-        unsafe_allow_html=True,
-    )
-with col2:
-    st.write("### :red[Red] v :blue[Blue]")
-    st.write("Human-mediated AI agent-to-agent chat")
+# Custom CSS
+with open("style.css") as f:
+    st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+# '<img src="./app/static/red-v-blue.png" height="100" style="">',
+st.markdown(
+    """
+<div class="header-container">
+  <img src="./app/static/red-v-blue.png" alt="Red v Blue" class="header-image">
+  <div class="header-text">
+    <h2><span class="red-word">Red</span> v <span class="blue-word">Blue</span></h2>
+    <p>Human-mediated AI agent-to-agent chat</p>
+  </div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
 
 st.divider()
 # st.write(
