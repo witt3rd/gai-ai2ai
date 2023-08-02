@@ -89,10 +89,12 @@ def session_create(
         "blue_bot": blue_bot,
         "blue_directive": blue_directive,
         "first_speaker": first_speaker,
+        "tokens": 0,
+        "cost": 0.0,
         "messages": [],
     }
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    session_file = os.path.join(DATA_DIR, timestamp + ".json")
+    session_file = os.path.join(DATA_DIR, f"{scenario} {timestamp}.json")
     session_write(session_file, session)
 
     return session_file, session
@@ -126,7 +128,11 @@ def session_add_message(
 #
 # Streamlit app
 #
-st.set_page_config(page_title="Red v Blue", page_icon="🤖", layout="wide")
+st.set_page_config(
+    page_title="Red v Blue",
+    page_icon="🤖",
+    layout="wide",
+)
 
 col1, col2 = st.columns([0.2, 0.8])
 with col1:
@@ -158,7 +164,12 @@ def other_speaker(speaker) -> Literal["Red", "Blue"]:
 
 
 # Reset the chat on first speaker change
-def reset_dialog() -> None:
+def reset_dialog(save_session: bool = True) -> None:
+    if "session" in st.session_state and save_session:
+        session_write(
+            session_file=st.session_state["session_file"],
+            session=st.session_state["session"],
+        )
     if "speaker" in st.session_state:
         del st.session_state["speaker"]
     if "Red" in st.session_state:
@@ -169,10 +180,10 @@ def reset_dialog() -> None:
         del st.session_state["memory"]
     if "response" in st.session_state:
         del st.session_state["response"]
-    if "tokens" in st.session_state:
-        del st.session_state["tokens"]
-    if "cost" in st.session_state:
-        del st.session_state["cost"]
+    if "session" in st.session_state:
+        del st.session_state["session"]
+    if "session_file" in st.session_state:
+        del st.session_state["session_file"]
 
 
 if "current_scenario_key" not in st.session_state:
@@ -233,6 +244,8 @@ with st.expander("Directives", expanded=True):
             key="first_speaker",
             on_change=reset_dialog,
         )
+
+        st.button("Reset", on_click=reset_dialog)
 
         # update = st.form_submit_button("Update", use_container_width=True)
         # if update:
@@ -352,9 +365,6 @@ if "memory" not in st.session_state:
     st.session_state["session_file"] = session_file
     st.session_state["session"] = session
 
-    st.session_state["tokens"] = 0
-    st.session_state["cost"] = 0
-
 
 def create_agent(name: str) -> None:
     directive = (
@@ -425,12 +435,15 @@ with st.form("chat_input"):
     color = speaker_color(speaker)
     prompt = st.text_area(f":{color}[{speaker}]", value=st.session_state["response"])
     submit = st.form_submit_button("Send", use_container_width=True)
+
+    session = st.session_state["session"]
+
     with st.expander("Statistics"):
         col1, col2 = st.columns(2)
         with col1:
-            st.text(f"Session Tokens: {st.session_state['tokens']}")
+            st.text(f"Session Tokens: {session['tokens']}")
         with col2:
-            st.text(f"Session Cost: {st.session_state['cost']:.3f}")
+            st.text(f"Session Cost: {session['cost']:.3f}")
     if submit:
         add_message(speaker, prompt)
         with st.spinner("Thinking..."):
@@ -448,9 +461,8 @@ with st.form("chat_input"):
                         raise e
                     response = response.removeprefix(prefix)
 
-                print(cb)
-                st.session_state["tokens"] += cb.total_tokens
-                st.session_state["cost"] += cb.total_cost
+                session["tokens"] = cb.total_tokens
+                session["cost"] = cb.total_cost
 
             st.session_state["response"] = response
             st.session_state["speaker"] = responder
