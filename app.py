@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 
 from langchain.agents import ConversationalChatAgent, load_tools, AgentExecutor
-from langchain.callbacks import StreamlitCallbackHandler
+from langchain.callbacks import StreamlitCallbackHandler, get_openai_callback
 from langchain.chat_models import ChatOpenAI
 from langchain.memory import ChatMessageHistory, ConversationSummaryBufferMemory
 from langchain.memory import ConversationBufferMemory
@@ -169,6 +169,10 @@ def reset_dialog() -> None:
         del st.session_state["memory"]
     if "response" in st.session_state:
         del st.session_state["response"]
+    if "tokens" in st.session_state:
+        del st.session_state["tokens"]
+    if "cost" in st.session_state:
+        del st.session_state["cost"]
 
 
 if "current_scenario_key" not in st.session_state:
@@ -348,6 +352,9 @@ if "memory" not in st.session_state:
     st.session_state["session_file"] = session_file
     st.session_state["session"] = session
 
+    st.session_state["tokens"] = 0
+    st.session_state["cost"] = 0
+
 
 def create_agent(name: str) -> None:
     directive = (
@@ -418,18 +425,32 @@ with st.form("chat_input"):
     color = speaker_color(speaker)
     prompt = st.text_area(f":{color}[{speaker}]", value=st.session_state["response"])
     submit = st.form_submit_button("Send", use_container_width=True)
+    with st.expander("Statistics"):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.text(f"Session Tokens: {st.session_state['tokens']}")
+        with col2:
+            st.text(f"Session Cost: {st.session_state['cost']:.3f}")
     if submit:
         add_message(speaker, prompt)
         with st.spinner("Thinking..."):
             st_callback = StreamlitCallbackHandler(st.container())
-            try:
-                response = responder_agent.run(input=prompt, callbacks=[st_callback])
-            except OutputParserException as e:
-                response = str(e)
-                prefix = "Could not parse LLM output: "
-                if not response.startswith(prefix):
-                    raise e
-                response = response.removeprefix(prefix)
+            with get_openai_callback() as cb:
+                try:
+                    response = responder_agent.run(
+                        input=prompt, callbacks=[st_callback]
+                    )
+
+                except OutputParserException as e:
+                    response = str(e)
+                    prefix = "Could not parse LLM output: "
+                    if not response.startswith(prefix):
+                        raise e
+                    response = response.removeprefix(prefix)
+
+                print(cb)
+                st.session_state["tokens"] += cb.total_tokens
+                st.session_state["cost"] += cb.total_cost
 
             st.session_state["response"] = response
             st.session_state["speaker"] = responder
