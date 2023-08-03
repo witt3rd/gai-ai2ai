@@ -4,7 +4,6 @@ import os
 from typing import Literal
 
 from dotenv import load_dotenv
-from pydantic import BaseModel
 
 from langchain.agents import ConversationalChatAgent, load_tools, AgentExecutor
 from langchain.callbacks import StreamlitCallbackHandler, get_openai_callback
@@ -21,6 +20,16 @@ from langchain.schema.language_model import BaseLanguageModel
 import streamlit as st
 from streamlit_chat import message
 
+from session_model import (
+    Message,
+    Session,
+    session_dir,
+    session_load,
+    session_prune,
+    session_save,
+    session_transcript,
+)
+
 #
 # Load environment variables
 #
@@ -28,8 +37,9 @@ from streamlit_chat import message
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-DATA_DIR = os.getenv("DATA_DIR", "./data")
-
+SESSION_DIR = os.getenv("SESSION_DIR")
+TRANSCRIPT_DIR = os.getenv("TRANSCRIPT_DIR")
+DATETIME_FORMAT = os.getenv("DATETIME_FORMAT")
 
 #
 # Helpers
@@ -52,62 +62,31 @@ def generate_string_from_messages(messages: list[dict[str, str]]) -> str:
 #
 
 
-class Message(BaseModel):
-    speaker: str
-    message: str
-
-    def __str__(self) -> str:
-        return f"### {speaker}: {message}"
-
-
-class Session(BaseModel):
-    scenario: str
-    red_bot: str
-    red_directive: str
-    blue_bot: str
-    blue_directive: str
-    first_speaker: str
-    tokens: int = 0
-    cost: float = 0.0
-    messages: list[Message] = []
-
-
 class SessionMemory(BaseMemory):
     return_messages: bool = True
 
     chat_history: ChatMessageHistory = ChatMessageHistory()
     memory_key: str = "chat_history"
     llm: BaseLanguageModel = None
-    session_file: str = None
     session: Session = None
     transcript: str = ""
 
+    # can be initialized with a session or with a scenario and bots
     def __init__(
         self,
-        human_prefix: str,
-        ai_prefix: str,
-        scenario: str,
-        red_bot: str,
-        red_directive: str,
-        blue_bot: str,
-        blue_directive: str,
-        first_speaker: str,
+        session: Session,
     ) -> None:
+        human_prefix = session.first_speaker
+        ai_prefix = "Red" if human_prefix == "Blue" else "Blue"
+
         super().__init__(
             human_prefix=human_prefix,
             ai_prefix=ai_prefix,
         )
+        self.session = session
+        for message in session.messages:
+            self.add_message_to_chat_history(message)
         self.llm = OpenAI()
-        self.session = Session(
-            scenario=scenario,
-            red_bot=red_bot,
-            red_directive=red_directive,
-            blue_bot=blue_bot,
-            blue_directive=blue_directive,
-            first_speaker=first_speaker,
-        )
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        self.session_file = os.path.join(DATA_DIR, f"{scenario} {timestamp}.json")
 
     #
     # Boilerplate
@@ -118,48 +97,35 @@ class SessionMemory(BaseMemory):
 
     @property
     def memory_variables(self) -> list[str]:
-        """Define the variables we are providing to the prompt."""
         return [self.memory_key]
 
     def load_memory_variables(self, inputs: dict[str, any]) -> dict[str, str]:
-        """Load the memory variables, in this case the entity key."""
-        # print(f"Loading memory variables: {inputs}")
         return {self.memory_key: self.chat_history.messages}
 
     def save_context(self, inputs: dict[str, any], outputs: dict[str, str]) -> None:
-        """Save context from this conversation to buffer."""
-        # text = inputs[list(inputs.keys())[0]]
-        # print(f"Saving context: {inputs} -> {outputs}")
+        pass
 
     #
     # Sessions
     #
 
-    def session_write(
-        self,
-    ) -> None:
-        if not os.path.exists(DATA_DIR):
-            os.mkdir(DATA_DIR)
-        with open(self.session_file, "w") as f:
-            json.dump(self.session.dict(), f, indent=2)
+    def add_message_to_chat_history(self, msg: Message) -> None:
+        if msg.speaker == self.session.first_speaker:
+            self.chat_history.add_user_message(msg.message)
+        else:
+            self.chat_history.add_ai_message(msg.message)
 
     def add_message(self, speaker, message) -> None:
         m = Message(speaker=speaker, message=message)
         self.transcript += str(m)
-
-        if speaker == st.session_state["first_speaker"]:
-            self.chat_history.add_user_message(message)
-        else:
-            self.chat_history.add_ai_message(message)
-
+        self.add_message_to_chat_history(m)
         self.session.messages.append(m)
-        self.session_write()
+        session_save(self.session, SESSION_DIR)
 
     def session_close(self) -> None:
         if len(self.session.messages) > 1:
-            self.session_write()
-        else:
-            os.remove(self.session_file)
+            session_save(self.session, SESSION_DIR)
+        session_prune(SESSION_DIR, self.session)
 
 
 #
@@ -219,6 +185,36 @@ def scenario_library_to_session_state() -> None:
 if "scenario_library" not in st.session_state:
     st.session_state["scenario_library"] = scenario_library_load()
 
+
+def scenario_library_from_session(session: Session) -> None:
+    if not session:
+        return
+    st.session_state["session"] = session
+    scenario_library = st.session_state["scenario_library"]
+    current_scenario_key = session.scenario
+    scenario_library["current_scenario_key"] = st.session_state[
+        "current_scenario_key"
+    ] = current_scenario_key
+    scenario = {
+        "first_speaker": session.first_speaker,
+        "prompt": session.prompt,
+        "Red": session.red_bot,
+        "Blue": session.blue_bot,
+    }
+    scenario_library["scenarios"][current_scenario_key] = scenario
+
+    def update_bot_scenario(bot_color, directive, scenario_library):
+        if bot_color not in scenario_library["bots"]:
+            scenario_library["bots"][bot_color] = directive
+        else:
+            bot_directive = scenario_library["bots"][bot_color]
+            if bot_directive != directive:
+                scenario_library["bots"][bot_color] = directive
+
+    update_bot_scenario(session.red_bot, session.red_directive, scenario_library)
+    update_bot_scenario(session.blue_bot, session.blue_directive, scenario_library)
+
+
 #
 # Streamlit app
 #
@@ -274,8 +270,11 @@ def reset_dialog() -> None:
     ):
         speaker = st.session_state["speaker"]
         response = st.session_state["response"]
-        memory = st.session_state["memory"]
-        memory.add_message(speaker, response)
+        prompt = st.session_state["prompt"]
+        if response != prompt:
+            memory = st.session_state["memory"]
+            print(f"Adding message: {speaker}: {response}")
+            memory.add_message(speaker, response)
 
     # clean up session state
     if "speaker" in st.session_state:
@@ -295,6 +294,114 @@ def reset_dialog() -> None:
 if "current_scenario_key" not in st.session_state:
     scenario_library_to_session_state()
 
+
+with st.expander("Sessions", expanded=True):
+    session_list = session_dir(SESSION_DIR)
+
+    session = st.session_state["session"] if "session" in st.session_state else None
+    if not session:
+        print(DATETIME_FORMAT)
+        timestamp = datetime.now().strftime(DATETIME_FORMAT)
+        name = f"New Session {timestamp}"
+        print(f"Creating new session: {name}")
+        session = Session(
+            name=name,
+            timestamp=timestamp,
+            scenario="",
+            red_bot="",
+            red_directive="",
+            blue_bot="",
+            blue_directive="",
+            first_speaker="",
+            prompt="",
+        )
+        session_save(session, SESSION_DIR)
+        session_list.append(name)
+        st.session_state["session"] = session
+    st.session_state["current_session_name"] = session.name
+
+    def on_session_changed() -> None:
+        reset_dialog()
+        current_session_name = st.session_state["current_session_name"]
+        session = session_load(current_session_name, SESSION_DIR)
+        scenario_library_from_session(session)
+        scenario_library_to_session_state()
+
+    st.selectbox(
+        "Sessions",
+        session_list,
+        label_visibility="collapsed",
+        key="current_session_name",
+        on_change=on_session_changed,
+    )
+
+    tokens = session.tokens if session else 0
+    cost = session.cost if session else 0.0
+    col1, col2 = st.columns(2)
+    with col1:
+        st.text(f"Timestamp: {session.timestamp}")
+        st.text(f"Session Tokens: {tokens}")
+    with col2:
+        st.text(f"Messages: {len(session.messages)}")
+        st.text(f"Session Cost: {cost:.3f}")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        new_session = st.button(
+            "New Session",
+            use_container_width=True,
+        )
+    with col2:
+        delete_session = st.button(
+            "Delete Session",
+            use_container_width=True,
+            disabled=session is None,
+        )
+    with col3:
+        st.button(
+            "Cleanup Sessions",
+            use_container_width=True,
+            on_click=lambda: session_prune(SESSION_DIR, session),
+        )
+
+    if new_session:
+        with st.form(key="new_session"):
+            st.text_input(
+                "New session",
+                placeholder="Session name",
+                label_visibility="collapsed",
+                key="new_session_name",
+            )
+
+            def on_create() -> None:
+                new_session_name = st.session_state["new_session_name"]
+                if len(new_session_name) == 0:
+                    st.warning(
+                        "Session name cannot be empty",
+                        icon="⚠️",
+                    )
+                    return
+
+                # session = Session(
+                #     name=f"{scenario} {timestamp}",
+                #     timestamp=timestamp,
+                #     scenario=scenario,
+                #     red_bot=red_bot,
+                #     red_directive=red_directive,
+                #     blue_bot=blue_bot,
+                #     blue_directive=blue_directive,
+                #     first_speaker=first_speaker,
+                # )
+                # self.session_write()
+                print(f"Would create new session: {new_session_name}")
+
+            create_new_session = st.form_submit_button(
+                "Create",
+                type="primary",
+                use_container_width=True,
+                on_click=on_create,
+            )
+
 with st.expander("Directives", expanded=True):
     st.markdown("#### Scenario")
 
@@ -303,10 +410,10 @@ with st.expander("Directives", expanded=True):
     bots = list(scenario_library["bots"])
 
     def on_scenario_changed() -> None:
+        reset_dialog()
         current_scenario_key = st.session_state["current_scenario_key"]
         scenario_library["current_scenario_key"] = current_scenario_key
         scenario_library_to_session_state()
-        reset_dialog()
 
     st.selectbox(
         "Scenario",
@@ -329,7 +436,6 @@ with st.expander("Directives", expanded=True):
             disabled=len(scenarios) == 0,
         )
     if new_scenario:
-        print("new_scenario")
         with st.form(key="new_scenario"):
             st.text_input(
                 "New scenario",
@@ -339,6 +445,7 @@ with st.expander("Directives", expanded=True):
             )
 
             def on_create() -> None:
+                reset_dialog()
                 new_scenario_name = st.session_state["new_scenario_name"]
                 if len(new_scenario_name) == 0:
                     st.warning(
@@ -359,7 +466,6 @@ with st.expander("Directives", expanded=True):
                 ] = new_scenario_name
                 scenario_library_save(scenario_library)
                 scenario_library_to_session_state()
-                reset_dialog()
 
             create_new_scenario = st.form_submit_button(
                 "Create",
@@ -371,6 +477,7 @@ with st.expander("Directives", expanded=True):
     if delete_scenario:
 
         def on_delete_scenario() -> None:
+            reset_dialog()
             current_scenario_key = st.session_state["current_scenario_key"]
             scenario_library["scenarios"].pop(current_scenario_key)
             scenarios = list(scenario_library["scenarios"].keys())
@@ -378,7 +485,6 @@ with st.expander("Directives", expanded=True):
             scenario_library["current_scenario_key"] = replace_scenario
             scenario_library_save(scenario_library)
             scenario_library_to_session_state()
-            reset_dialog()
 
         with st.form(key="delete_scenario"):
             current_scenario_key = st.session_state["current_scenario_key"]
@@ -398,6 +504,7 @@ with st.expander("Directives", expanded=True):
         col1, col2 = st.columns(2)
 
         def on_bot_changed(bot_key: str) -> None:
+            reset_dialog()
             bot_lower = bot_key.lower()
             current_scenario_key = st.session_state["current_scenario_key"]
             if not current_scenario_key:
@@ -406,16 +513,15 @@ with st.expander("Directives", expanded=True):
             scenario[bot_key] = st.session_state[f"{bot_lower}_bot"]
             scenario_library_save(scenario_library)
             scenario_library_to_session_state()
-            reset_dialog()
 
         def on_directive_changed(bot_key: str) -> None:
+            reset_dialog()
             bot_lower = bot_key.lower()
             bot_directive = st.session_state[f"{bot_lower}_directive"]
             bot = st.session_state[f"{bot_lower}_bot"]
             scenario_library["bots"][bot] = bot_directive
             scenario_library_save(scenario_library)
             scenario_library_to_session_state()
-            reset_dialog()
 
         # there is a special case where there are no scenarios, but
         # there are bots and therefore None or "" is not a valid option
@@ -480,6 +586,7 @@ with st.expander("Directives", expanded=True):
         if delete_red_bot or delete_blue_bot:
 
             def delete_bot(bot: str) -> None:
+                reset_dialog()
                 del scenario_library["bots"][bot]
                 bots = list(scenario_library["bots"].keys())
                 replace_bot = "" if not bots else bots[0]
@@ -490,7 +597,6 @@ with st.expander("Directives", expanded=True):
                         scenario["Blue"] = replace_bot
                 scenario_library_save(scenario_library)
                 scenario_library_to_session_state()
-                reset_dialog()
 
             with st.form(key="delete_bot"):
                 bot_key = "red_bot" if delete_red_bot else "blue_bot"
@@ -510,6 +616,7 @@ with st.expander("Directives", expanded=True):
         if new_bot:
 
             def on_create() -> None:
+                reset_dialog()
                 new_bot_name = st.session_state["new_bot_name"]
                 if len(new_bot_name) == 0:
                     st.warning(
@@ -525,10 +632,8 @@ with st.expander("Directives", expanded=True):
                         scenario["Red"] = replace_bot
                     if not scenario["Blue"] or scenario["Blue"] == "":
                         scenario["Blue"] = replace_bot
-                print(scenario_library)
                 scenario_library_save(scenario_library)
                 scenario_library_to_session_state()
-                reset_dialog()
 
             with st.form(key="new_bot"):
                 st.text_input(
@@ -545,12 +650,12 @@ with st.expander("Directives", expanded=True):
                 )
 
         def on_first_speaker_changed() -> None:
+            reset_dialog()
             current_scenario_key = st.session_state["current_scenario_key"]
             scenario = scenario_library["scenarios"][current_scenario_key]
             scenario["first_speaker"] = st.session_state["first_speaker"]
             scenario_library_save(scenario_library)
             scenario_library_to_session_state()
-            reset_dialog()
 
         st.selectbox(
             "First speaker",
@@ -560,12 +665,12 @@ with st.expander("Directives", expanded=True):
         )
 
         def on_prompt_changed() -> None:
+            reset_dialog()
             current_scenario_key = st.session_state["current_scenario_key"]
             scenario = scenario_library["scenarios"][current_scenario_key]
             scenario["prompt"] = st.session_state["prompt"]
             scenario_library_save(scenario_library)
             scenario_library_to_session_state()
-            reset_dialog()
 
         st.text_area(
             "Prompt",
@@ -579,6 +684,7 @@ with st.expander("Directives", expanded=True):
             use_container_width=True,
             on_click=reset_dialog,
         )
+
 
 #
 # Validate the configuration before continuing
@@ -610,21 +716,20 @@ if "llm" not in st.session_state:
     st.session_state["llm"] = llm
 
 if "memory" not in st.session_state:
-    human_prefix = st.session_state["first_speaker"]
-    ai_prefix = "Red" if human_prefix == "Blue" else "Blue"
-
-    memory = SessionMemory(
-        human_prefix=human_prefix,
-        ai_prefix=ai_prefix,
-        scenario=st.session_state["current_scenario_key"],
-        red_bot=st.session_state["red_bot"],
-        red_directive=st.session_state["red_directive"],
-        blue_bot=st.session_state["blue_bot"],
-        blue_directive=st.session_state["blue_directive"],
-        first_speaker=st.session_state["first_speaker"],
+    memory = (
+        SessionMemory(
+            scenario=st.session_state["current_scenario_key"],
+            red_bot=st.session_state["red_bot"],
+            red_directive=st.session_state["red_directive"],
+            blue_bot=st.session_state["blue_bot"],
+            blue_directive=st.session_state["blue_directive"],
+            first_speaker=st.session_state["first_speaker"],
+        )
+        if "session" not in st.session_state
+        else SessionMemory(session=st.session_state["session"])
     )
     st.session_state["memory"] = memory
-    scenario_library_save(st.session_state["scenario_library"])
+    # scenario_library_save(st.session_state["scenario_library"])
 
 
 def create_agent(name: str) -> None:
@@ -657,21 +762,38 @@ if "Blue" not in st.session_state:
 # Chat history
 #
 
-messages = st.session_state["memory"].chat_history.messages
-for i in range(len(messages)):
-    message = messages[i]
+with st.expander("Chat History", expanded=True):
+    messages = st.session_state["memory"].chat_history.messages
+    for i in range(len(messages)):
+        message = messages[i]
 
-    if type(message) == HumanMessage:
-        speaker = st.session_state["first_speaker"]
-    else:
-        speaker = other_speaker(st.session_state["first_speaker"])
-    color = speaker_color(speaker)
-    st.text_area(
-        f":{color}[{speaker}]",
-        value=message.content,
-        key=f"chat_history_{i}",
-    )
+        if type(message) == HumanMessage:
+            speaker = st.session_state["first_speaker"]
+        else:
+            speaker = other_speaker(st.session_state["first_speaker"])
+        color = speaker_color(speaker)
+        st.text_area(
+            f":{color}[{speaker}]",
+            value=message.content,
+            key=f"chat_history_{i}",
+        )
 
+    if len(messages) > 0:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.button(
+                "Clear Chat History",
+                use_container_width=True,
+                on_click=st.session_state["memory"].clear,
+            )
+        with col2:
+            st.button(
+                "Generate Transcript",
+                use_container_width=True,
+                on_click=lambda: session_transcript(
+                    st.session_state["session"], TRANSCRIPT_DIR
+                ),
+            )
 
 with st.form("chat_input"):
     speaker = st.session_state["speaker"]
@@ -684,12 +806,6 @@ with st.form("chat_input"):
 
     memory = st.session_state["memory"]
     session = memory.session
-    with st.expander("Statistics"):
-        col1, col2 = st.columns(2)
-        with col1:
-            st.text(f"Session Tokens: {session.tokens}")
-        with col2:
-            st.text(f"Session Cost: {session.cost:.3f}")
     if submit:
         memory.add_message(speaker, prompt)
         with st.spinner("Thinking..."):

@@ -2,6 +2,7 @@ duckduckgo-search
 langchain
 openai
 python-dotenv
+snakemd
 streamlit
 streamlit_chat
 tiktoken
