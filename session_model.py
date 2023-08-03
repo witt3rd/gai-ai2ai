@@ -101,7 +101,6 @@ def session_transcript_save(
     )
 
     # parse the timestamp
-    print(f"timestamp: {session.timestamp}")
     timestamp = datetime.datetime.strptime(
         session.timestamp,
         get_config().DATETIME_FORMAT,
