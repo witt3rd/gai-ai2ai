@@ -26,7 +26,8 @@ from session_model import (
     session_load,
     session_prune,
     session_save,
-    session_transcript,
+    session_transcript_save,
+    session_transcript_load,
 )
 
 
@@ -269,7 +270,6 @@ def reset_dialog() -> None:
         prompt = st.session_state["prompt"]
         if response != prompt:
             memory = st.session_state["memory"]
-            print(f"Adding message: {speaker}: {response}")
             memory.add_message(speaker, response)
 
     # clean up session state
@@ -296,10 +296,8 @@ with st.expander("Sessions", expanded=True):
 
     session = st.session_state["session"] if "session" in st.session_state else None
     if not session:
-        print(get_config().DATETIME_FORMAT)
         timestamp = datetime.now().strftime(get_config().DATETIME_FORMAT)
         name = f"New Session {timestamp}"
-        print(f"Creating new session: {name}")
         session = Session(
             name=name,
             timestamp=timestamp,
@@ -758,39 +756,49 @@ if "Blue" not in st.session_state:
 # Chat history
 #
 
-with st.expander("Chat History", expanded=True):
-    messages = st.session_state["memory"].chat_history.messages
-    for i in range(len(messages)):
-        message = messages[i]
+messages = st.session_state["memory"].chat_history.messages
+if len(messages) > 1:
+    with st.expander("Chat History", expanded=True):
+        messages = st.session_state["memory"].chat_history.messages
+        for i in range(len(messages)):
+            message = messages[i]
 
-        if type(message) == HumanMessage:
-            speaker = st.session_state["first_speaker"]
-        else:
-            speaker = other_speaker(st.session_state["first_speaker"])
-        color = speaker_color(speaker)
-        st.text_area(
-            f":{color}[{speaker}]",
-            value=message.content,
-            key=f"chat_history_{i}",
-        )
+            if type(message) == HumanMessage:
+                speaker = st.session_state["first_speaker"]
+            else:
+                speaker = other_speaker(st.session_state["first_speaker"])
+            color = speaker_color(speaker)
+            st.text_area(
+                f":{color}[{speaker}]",
+                value=message.content,
+                key=f"chat_history_{i}",
+            )
 
-    if len(messages) > 0:
-        col1, col2 = st.columns(2)
-        with col1:
+        if len(messages) > 0:
             st.button(
                 "Clear Chat History",
                 use_container_width=True,
                 on_click=st.session_state["memory"].clear,
             )
-        with col2:
-            st.button(
-                "Generate Transcript",
-                use_container_width=True,
-                on_click=lambda: session_transcript(
-                    st.session_state["session"],
-                    get_config().TRANSCRIPT_DIR,
-                ),
-            )
+
+    with st.expander("Transcript", expanded=False):
+        st.button(
+            "Generate Transcript",
+            use_container_width=True,
+            on_click=lambda: session_transcript_save(
+                st.session_state["session"],
+                get_config().TRANSCRIPT_DIR,
+            ),
+        )
+
+        session = st.session_state["session"]
+        transcript = session_transcript_load(
+            get_config().TRANSCRIPT_DIR,
+            session.name,
+            session.timestamp,
+        )
+        if transcript:
+            st.markdown(transcript, unsafe_allow_html=True)
 
 with st.form("chat_input"):
     speaker = st.session_state["speaker"]

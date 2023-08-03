@@ -5,7 +5,7 @@ import os
 from dotenv import load_dotenv
 from pydantic import BaseModel
 import snakemd
-from snakemd import Inline, Paragraph
+from snakemd import Inline, Paragraph, Raw
 
 from config import get_config
 
@@ -79,15 +79,26 @@ def session_load(name: str, session_dir: str) -> Session:
     return session
 
 
-def session_transcript(
-    session: Session,
-    outdir: str,
-) -> None:
+def _mk_transcript_filename(
+    dir: str,
+    name: str,
+    timestamp: str,
+) -> str:
     # ensure outdir exists
-    print(f"outdir: {outdir}")
-    os.makedirs(outdir, exist_ok=True)
+    os.makedirs(dir, exist_ok=True)
+    transcript_file = os.path.join(dir, f"{name} {timestamp}")
+    return transcript_file
 
-    transcript_file = os.path.join(outdir, f"{session.name} {session.timestamp}")
+
+def session_transcript_save(
+    session: Session,
+    dir: str,
+) -> None:
+    transcript_file = _mk_transcript_filename(
+        dir,
+        session.name,
+        session.timestamp,
+    )
 
     # parse the timestamp
     print(f"timestamp: {session.timestamp}")
@@ -101,8 +112,6 @@ def session_transcript(
     doc.add_paragraph(
         f"A Red v Blue transcript between {session.red_bot} (red) and {session.blue_bot} (blue) on {timestamp.strftime('%B %d, %Y at %I:%M %p')}."
     )
-
-    # doc.add_paragraph(f"The following conversation took place on {timestamp.day}")
 
     doc.add_heading(f"Directives", 2)
 
@@ -118,11 +127,27 @@ def session_transcript(
         "Blue": session.blue_bot,
     }
     for message in session.messages:
-        p = Paragraph(
-            [
-                Inline(speakers[message.speaker], bold=True),
-                Inline(f": {message.message}"),
-            ]
-        )
-        doc.add_block(p)
+        doc.add_block(Inline(f"{speakers[message.speaker]}:", bold=True))
+        doc.add_raw(message.message)
     doc.dump(transcript_file)
+
+
+def session_transcript_load(
+    dir: str,
+    name: str,
+    timestamp: str,
+) -> str | None:
+    transcript_file = (
+        _mk_transcript_filename(
+            dir,
+            name,
+            timestamp,
+        )
+        + ".md"
+    )
+    # does the file exist?
+    if not os.path.exists(transcript_file):
+        return None
+    with open(transcript_file, "r") as f:
+        transcript = f.read()
+    return transcript
