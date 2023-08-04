@@ -3,8 +3,6 @@ import json
 import os
 from typing import Literal
 
-from dotenv import load_dotenv
-
 from langchain.agents import ConversationalChatAgent, load_tools, AgentExecutor
 from langchain.callbacks import StreamlitCallbackHandler, get_openai_callback
 from langchain.chat_models import ChatOpenAI
@@ -20,6 +18,7 @@ from langchain.schema.language_model import BaseLanguageModel
 import streamlit as st
 from streamlit_chat import message
 
+from config import get_config
 from session_model import (
     Message,
     Session,
@@ -30,16 +29,6 @@ from session_model import (
     session_transcript,
 )
 
-#
-# Load environment variables
-#
-
-load_dotenv()
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-SESSION_DIR = os.getenv("SESSION_DIR")
-TRANSCRIPT_DIR = os.getenv("TRANSCRIPT_DIR")
-DATETIME_FORMAT = os.getenv("DATETIME_FORMAT")
 
 #
 # Helpers
@@ -86,7 +75,7 @@ class SessionMemory(BaseMemory):
         self.session = session
         for message in session.messages:
             self.add_message_to_chat_history(message)
-        self.llm = OpenAI()
+        self.llm = OpenAI(openai_api_key=get_config().OPENAI_API_KEY)
 
     #
     # Boilerplate
@@ -120,12 +109,12 @@ class SessionMemory(BaseMemory):
         self.transcript += str(m)
         self.add_message_to_chat_history(m)
         self.session.messages.append(m)
-        session_save(self.session, SESSION_DIR)
+        session_save(self.session, get_config().SESSION_DIR)
 
     def session_close(self) -> None:
         if len(self.session.messages) > 1:
-            session_save(self.session, SESSION_DIR)
-        session_prune(SESSION_DIR, self.session)
+            session_save(self.session, get_config().SESSION_DIR)
+        session_prune(get_config().SESSION_DIR, self.session)
 
 
 #
@@ -203,7 +192,7 @@ def scenario_library_from_session(session: Session) -> None:
     }
     scenario_library["scenarios"][current_scenario_key] = scenario
 
-    def update_bot_scenario(bot_color, directive, scenario_library):
+    def update_bot_scenario(bot_color, directive, scenario_library) -> None:
         if bot_color not in scenario_library["bots"]:
             scenario_library["bots"][bot_color] = directive
         else:
@@ -224,6 +213,13 @@ st.set_page_config(
     page_icon="🤖",
     layout="wide",
 )
+
+if get_config().OPENAI_API_KEY is None:
+    st.error(
+        "OpenAI API key not found. Please set OPENAI_API_KEY environment variable.",
+        icon="🔑",
+    )
+    st.stop()
 
 # Custom CSS
 with open("style.css") as f:
@@ -296,12 +292,12 @@ if "current_scenario_key" not in st.session_state:
 
 
 with st.expander("Sessions", expanded=True):
-    session_list = session_dir(SESSION_DIR)
+    session_list = session_dir(get_config().SESSION_DIR)
 
     session = st.session_state["session"] if "session" in st.session_state else None
     if not session:
-        print(DATETIME_FORMAT)
-        timestamp = datetime.now().strftime(DATETIME_FORMAT)
+        print(get_config().DATETIME_FORMAT)
+        timestamp = datetime.now().strftime(get_config().DATETIME_FORMAT)
         name = f"New Session {timestamp}"
         print(f"Creating new session: {name}")
         session = Session(
@@ -315,7 +311,7 @@ with st.expander("Sessions", expanded=True):
             first_speaker="",
             prompt="",
         )
-        session_save(session, SESSION_DIR)
+        session_save(session, get_config().SESSION_DIR)
         session_list.append(name)
         st.session_state["session"] = session
     st.session_state["current_session_name"] = session.name
@@ -323,7 +319,7 @@ with st.expander("Sessions", expanded=True):
     def on_session_changed() -> None:
         reset_dialog()
         current_session_name = st.session_state["current_session_name"]
-        session = session_load(current_session_name, SESSION_DIR)
+        session = session_load(current_session_name, get_config().SESSION_DIR)
         scenario_library_from_session(session)
         scenario_library_to_session_state()
 
@@ -361,7 +357,7 @@ with st.expander("Sessions", expanded=True):
         st.button(
             "Cleanup Sessions",
             use_container_width=True,
-            on_click=lambda: session_prune(SESSION_DIR, session),
+            on_click=lambda: session_prune(get_config().SESSION_DIR, session),
         )
 
     if new_session:
@@ -712,6 +708,7 @@ if "llm" not in st.session_state:
         model="gpt-4",
         temperature=0.7,
         verbose=True,
+        openai_api_key=get_config().OPENAI_API_KEY,
     )
     st.session_state["llm"] = llm
 
@@ -729,7 +726,6 @@ if "memory" not in st.session_state:
         else SessionMemory(session=st.session_state["session"])
     )
     st.session_state["memory"] = memory
-    # scenario_library_save(st.session_state["scenario_library"])
 
 
 def create_agent(name: str) -> None:
@@ -791,7 +787,8 @@ with st.expander("Chat History", expanded=True):
                 "Generate Transcript",
                 use_container_width=True,
                 on_click=lambda: session_transcript(
-                    st.session_state["session"], TRANSCRIPT_DIR
+                    st.session_state["session"],
+                    get_config().TRANSCRIPT_DIR,
                 ),
             )
 

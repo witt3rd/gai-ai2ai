@@ -7,14 +7,7 @@ from pydantic import BaseModel
 import snakemd
 from snakemd import Inline, Paragraph
 
-#
-# Environment Variables
-#
-
-load_dotenv()
-
-DATETIME_FORMAT = os.getenv("DATETIME_FORMAT")
-
+from config import get_config
 
 #
 # Models
@@ -55,15 +48,14 @@ def _mk_session_filename(name: str, dir: str) -> str:
 
 
 def session_save(session: Session, session_dir: str) -> None:
-    # ensure outdir exists
     os.makedirs(session_dir, exist_ok=True)
-
     session_file = _mk_session_filename(session.name, session_dir)
     with open(session_file, "w") as f:
         json.dump(session.dict(), f, indent=2)
 
 
 def session_dir(session_dir: str) -> list[str]:
+    os.makedirs(session_dir, exist_ok=True)
     sessions = []
     for file in os.listdir(session_dir):
         if file.endswith(".json"):
@@ -99,7 +91,10 @@ def session_transcript(
 
     # parse the timestamp
     print(f"timestamp: {session.timestamp}")
-    timestamp = datetime.datetime.strptime(session.timestamp, DATETIME_FORMAT)
+    timestamp = datetime.datetime.strptime(
+        session.timestamp,
+        get_config().DATETIME_FORMAT,
+    )
 
     doc = snakemd.new_doc()
     doc.add_heading(session.name, 1)

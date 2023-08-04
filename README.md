@@ -8,6 +8,9 @@ That's the idea behind Red v Blue. It's a chat app that uses two large language 
 
 Set up a conversation between two AIs, each with their own directives, then seed the conversation with a starting prompt (as one of them), then generate the response from the other. You have a chance to edit that response before sending it back to the first AI, and so on.
 
+Create and activate a fresh Python virtual environment, then run:
+
 ```bash
+./install.sh # install dependencies
 streamlit run app.py
 ```
