@@ -24,7 +24,8 @@ from session_model import (
     Session,
     session_dir,
     session_load,
-    session_prune,
+    session_purge,
+    session_rename,
     session_save,
     session_transcript_save,
     session_transcript_load,
@@ -127,7 +128,7 @@ class SessionMemory(BaseMemory):
     def session_close(self) -> None:
         if len(self.session.messages) > 1:
             session_save(self.session, get_config().SESSION_DIR)
-        session_prune(get_config().SESSION_DIR, self.session)
+        # session_purge(get_config().SESSION_DIR, self.session)
 
 
 #
@@ -164,6 +165,14 @@ def scenario_library_from_session_state() -> None:
 def scenario_library_to_session_state() -> None:
     scenario_library = st.session_state["scenario_library"]
     current_scenario_key = scenario_library["current_scenario_key"]
+    if not current_scenario_key or len(current_scenario_key) == 0:
+        scenarios = list(scenario_library["scenarios"].keys())
+        if len(scenarios) > 0:
+            current_scenario_key = scenarios[0]
+            scenario_library["current_scenario_key"] = current_scenario_key
+        else:
+            current_scenario_key = None
+
     if current_scenario_key:
         scenario = scenario_library["scenarios"][current_scenario_key]
         st.session_state["first_speaker"] = scenario["first_speaker"]
@@ -175,6 +184,7 @@ def scenario_library_to_session_state() -> None:
         blue_bot = scenario["Blue"]
         st.session_state["red_directive"] = bots[red_bot] if red_bot in bots else ""
         st.session_state["blue_directive"] = bots[blue_bot] if blue_bot in bots else ""
+        st.session_state["current_scenario_key"] = current_scenario_key
     else:
         st.session_state["first_speaker"] = "Red"
         st.session_state["prompt"] = ""
@@ -182,6 +192,7 @@ def scenario_library_to_session_state() -> None:
         st.session_state["blue_bot"] = ""
         st.session_state["red_directive"] = ""
         st.session_state["blue_directive"] = ""
+        st.session_state["current_scenario_key"] = ""
 
 
 def scenario_library_from_session(session: Session) -> None:
@@ -213,6 +224,35 @@ def scenario_library_from_session(session: Session) -> None:
     update_bot_scenario(session.blue_bot, session.blue_directive, scenario_library)
 
 
+def session_from_session_state(
+    name: str | None = None,
+    timestamp: str | None = None,
+) -> Session:
+    if not timestamp:
+        timestamp = datetime.now().strftime(get_config().DATETIME_FORMAT)
+
+    if not name:
+        scenario = (
+            st.session_state["current_scenario_key"]
+            if "current_scenario_key" in st.session_state
+            else "New Session"
+        )
+        name = f"{scenario} {timestamp}"
+
+    session = Session(
+        name=name,
+        timestamp=timestamp,
+        scenario=st.session_state["current_scenario_key"],
+        red_bot=st.session_state["red_bot"],
+        red_directive=st.session_state["red_directive"],
+        blue_bot=st.session_state["blue_bot"],
+        blue_directive=st.session_state["blue_directive"],
+        first_speaker=st.session_state["first_speaker"],
+        prompt=st.session_state["prompt"],
+    )
+    return session
+
+
 def reset_dialog() -> None:
     # commit the final response, if possible
     if (
@@ -238,8 +278,33 @@ def reset_dialog() -> None:
         del st.session_state["response"]
     if "memory" in st.session_state:
         memory = st.session_state["memory"]
-        # memory.session_close()
+        memory.session_close()
         del st.session_state["memory"]
+
+
+def on_new_session() -> None:
+    session = session_from_session_state()
+    session_save(session, get_config().SESSION_DIR)
+    st.session_state["session"] = session
+    st.session_state["current_session_name"] = session.name
+
+
+def on_rename_session() -> None:
+    session = st.session_state["session"]
+    name = st.session_state["new_session_name"]
+    if len(name) == 0:
+        st.warning(
+            "Session name cannot be empty",
+            icon="⚠️",
+        )
+        return
+    session_rename(
+        session,
+        get_config().SESSION_DIR,
+        name,
+    )
+    session.name = name
+    st.session_state["current_session_name"] = session.name
 
 
 #
@@ -252,6 +317,13 @@ if "scenario_library" not in st.session_state:
 if "current_scenario_key" not in st.session_state:
     scenario_library_to_session_state()
 
+if "session" not in st.session_state:
+    session = session_from_session_state()
+    session_save(session, get_config().SESSION_DIR)
+    st.session_state["session"] = session
+
+if "current_session_name" not in st.session_state:
+    st.session_state["current_session_name"] = session.name
 
 #
 # Streamlit app
@@ -296,26 +368,7 @@ tab1, tab2 = st.tabs(["Main", "About"])
 with tab1:
     with st.expander("Sessions", expanded=True):
         session_list = session_dir(get_config().SESSION_DIR)
-
-        session = st.session_state["session"] if "session" in st.session_state else None
-        if not session:
-            timestamp = datetime.now().strftime(get_config().DATETIME_FORMAT)
-            name = f"New Session {timestamp}"
-            session = Session(
-                name=name,
-                timestamp=timestamp,
-                scenario="",
-                red_bot="",
-                red_directive="",
-                blue_bot="",
-                blue_directive="",
-                first_speaker="",
-                prompt="",
-            )
-            session_save(session, get_config().SESSION_DIR)
-            session_list.append(name)
-            st.session_state["session"] = session
-        st.session_state["current_session_name"] = session.name
+        session = st.session_state["session"]
 
         def on_session_changed() -> None:
             reset_dialog()
@@ -342,69 +395,52 @@ with tab1:
             st.text(f"Messages: {len(session.messages)}")
             st.text(f"Session Cost: {cost:.3f}")
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             new_session = st.button(
                 "New Session",
                 use_container_width=True,
+                on_click=on_new_session,
             )
         with col2:
+            rename_session = st.button(
+                "Rename Session",
+                use_container_width=True,
+            )
+        with col3:
             delete_session = st.button(
                 "Delete Session",
                 use_container_width=True,
-                disabled=session is None,
+                disabled=True,
             )
-        with col3:
+        with col4:
             st.button(
                 "Cleanup Sessions",
                 use_container_width=True,
-                on_click=lambda: session_prune(get_config().SESSION_DIR, session),
+                on_click=lambda: session_purge(get_config().SESSION_DIR, session),
             )
 
-        if new_session:
-            with st.form(key="new_session"):
+        if rename_session:
+            with st.form(key="rename_session_form"):
+                st.session_state["new_session_name"] = session.name
                 st.text_input(
-                    "New session",
+                    "Name",
                     placeholder="Session name",
                     label_visibility="collapsed",
                     key="new_session_name",
                 )
 
-                def on_create() -> None:
-                    name = st.session_state["new_session_name"]
-                    if len(name) == 0:
-                        st.warning(
-                            "Session name cannot be empty",
-                            icon="⚠️",
-                        )
-                        return
-
-                    session = Session(
-                        name=name,
-                        timestamp=datetime.now().strftime(get_config().DATETIME_FORMAT),
-                        scenario="",
-                        red_bot="",
-                        red_directive="",
-                        blue_bot="",
-                        blue_directive="",
-                        first_speaker="",
-                        prompt="",
-                    )
-                    session_save(session, get_config().SESSION_DIR)
-                    session_list.append(name)
-                    st.session_state["session"] = session
-                    st.session_state["current_session_name"] = name
-
-                create_new_session = st.form_submit_button(
-                    "Create",
+                st.form_submit_button(
+                    "Rename",
                     type="primary",
                     use_container_width=True,
-                    on_click=on_create,
+                    on_click=on_rename_session,
                 )
 
     with st.expander("Directives", expanded=True):
         st.markdown("#### Scenario")
 
+        print(f"Current scenario: {st.session_state['current_scenario_key']}")
         scenario_library = st.session_state["scenario_library"]
         scenarios = list(scenario_library["scenarios"])
         bots = list(scenario_library["bots"])

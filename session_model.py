@@ -54,6 +54,13 @@ def session_save(session: Session, session_dir: str) -> None:
         json.dump(session.dict(), f, indent=2)
 
 
+def session_rename(session: Session, session_dir: str, new_name: str) -> None:
+    os.makedirs(session_dir, exist_ok=True)
+    session_file = _mk_session_filename(session.name, session_dir)
+    new_session_file = _mk_session_filename(new_name, session_dir)
+    os.rename(session_file, new_session_file)
+
+
 def session_dir(session_dir: str) -> list[str]:
     os.makedirs(session_dir, exist_ok=True)
     sessions = []
@@ -63,7 +70,7 @@ def session_dir(session_dir: str) -> list[str]:
     return sessions
 
 
-def session_prune(session_dir: str, exclude: Session) -> None:
+def session_purge(session_dir: str, exclude: Session) -> None:
     for file in os.listdir(session_dir):
         if file.endswith(".json"):
             filename = file.removesuffix(".json")
