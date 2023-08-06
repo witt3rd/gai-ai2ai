@@ -184,10 +184,6 @@ def scenario_library_to_session_state() -> None:
         st.session_state["blue_directive"] = ""
 
 
-if "scenario_library" not in st.session_state:
-    st.session_state["scenario_library"] = scenario_library_load()
-
-
 def scenario_library_from_session(session: Session) -> None:
     if not session:
         return
@@ -217,28 +213,6 @@ def scenario_library_from_session(session: Session) -> None:
     update_bot_scenario(session.blue_bot, session.blue_directive, scenario_library)
 
 
-#
-# Streamlit app
-#
-
-st.set_page_config(
-    page_title="InsightCrafter™",
-    page_icon="💡",
-    # layout="wide",
-)
-
-if get_config().OPENAI_API_KEY is None:
-    st.error(
-        "OpenAI API key not found. Please set OPENAI_API_KEY environment variable.",
-        icon="🔑",
-    )
-    st.stop()
-
-#
-# Session state
-#
-
-
 def reset_dialog() -> None:
     # commit the final response, if possible
     if (
@@ -264,12 +238,37 @@ def reset_dialog() -> None:
         del st.session_state["response"]
     if "memory" in st.session_state:
         memory = st.session_state["memory"]
-        memory.session_close()
+        # memory.session_close()
         del st.session_state["memory"]
 
 
+#
+# Session state
+#
+
+if "scenario_library" not in st.session_state:
+    st.session_state["scenario_library"] = scenario_library_load()
+
 if "current_scenario_key" not in st.session_state:
     scenario_library_to_session_state()
+
+
+#
+# Streamlit app
+#
+
+st.set_page_config(
+    page_title="InsightCrafter™",
+    page_icon="💡",
+)
+
+if get_config().OPENAI_API_KEY is None:
+    st.error(
+        "OpenAI API key not found. Please set OPENAI_API_KEY environment variable.",
+        icon="🔑",
+    )
+    st.stop()
+
 
 #
 # UI
@@ -285,17 +284,12 @@ st.markdown(
 <img src="./app/static/hero.png" alt="InsightCrafter" class="header-image">
 <div class="header-text">
     <h2>InsightCrafter™</h2>
-    <p>Crafting Clarity from Contrasts</p>
+    <p>Crafting Clarity through Discourse</p>
 </div>
 </div>
 """,
     unsafe_allow_html=True,
 )
-
-# st.write(
-#     "[![Star](https://img.shields.io/github/stars/witt3rd/gai-ai2ai.svg?logo=github&style=social)](https://gitHub.com/witt3rd/gai-ai2ai)"
-#     + "[![Follow](https://img.shields.io/twitter/follow/dt_public?style=social)](https://www.twitter.com/dt_public)"
-# )
 
 tab1, tab2 = st.tabs(["Main", "About"])
 
@@ -377,26 +371,29 @@ with tab1:
                 )
 
                 def on_create() -> None:
-                    new_session_name = st.session_state["new_session_name"]
-                    if len(new_session_name) == 0:
+                    name = st.session_state["new_session_name"]
+                    if len(name) == 0:
                         st.warning(
                             "Session name cannot be empty",
                             icon="⚠️",
                         )
                         return
 
-                    # session = Session(
-                    #     name=f"{scenario} {timestamp}",
-                    #     timestamp=timestamp,
-                    #     scenario=scenario,
-                    #     red_bot=red_bot,
-                    #     red_directive=red_directive,
-                    #     blue_bot=blue_bot,
-                    #     blue_directive=blue_directive,
-                    #     first_speaker=first_speaker,
-                    # )
-                    # self.session_write()
-                    print(f"Would create new session: {new_session_name}")
+                    session = Session(
+                        name=name,
+                        timestamp=datetime.now().strftime(get_config().DATETIME_FORMAT),
+                        scenario="",
+                        red_bot="",
+                        red_directive="",
+                        blue_bot="",
+                        blue_directive="",
+                        first_speaker="",
+                        prompt="",
+                    )
+                    session_save(session, get_config().SESSION_DIR)
+                    session_list.append(name)
+                    st.session_state["session"] = session
+                    st.session_state["current_session_name"] = name
 
                 create_new_session = st.form_submit_button(
                     "Create",

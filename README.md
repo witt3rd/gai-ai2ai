@@ -1,6 +1,6 @@
 # InsightCrafter™
 
-_Crafting Clarity from Contrasts_
+_Crafting Clarity through Discourse_
 
 <img src="static/hero.png" width="704" />
 
