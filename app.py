@@ -210,8 +210,8 @@ def scenario_library_from_session(session: Session) -> None:
 #
 
 st.set_page_config(
-    page_title="Red v Blue",
-    page_icon="🤖",
+    page_title="InsightCrafter™",
+    page_icon="💡",
     layout="wide",
 )
 
@@ -229,10 +229,10 @@ with open("style.css") as f:
 st.markdown(
     """
 <div class="header-container">
-  <img src="./app/static/red-v-blue.png" alt="Red v Blue" class="header-image">
+  <img src="./app/static/hero.png" alt="InsightCrafter" class="header-image">
   <div class="header-text">
-    <h2><span class="red-word">Red</span> v <span class="blue-word">Blue</span></h2>
-    <p>Human-mediated AI agent-to-agent chat</p>
+    <h2>InsightCrafter™</h2>
+    <p>Crafting Clarity from Contrasts</p>
   </div>
 </div>
 """,
@@ -543,24 +543,6 @@ with st.expander("Directives", expanded=True):
 
         with col1:
             st.selectbox(
-                ":red[🤖 Red Bot]",
-                bots,
-                key="red_bot",
-                on_change=lambda: on_bot_changed("Red"),
-            )
-            st.text_area(
-                ":red[🤖 Red Directive]",
-                key="red_directive",
-                on_change=lambda: on_directive_changed("Red"),
-            )
-            delete_red_bot = st.button(
-                "Delete Red Bot",
-                use_container_width=True,
-                disabled=len(bots) == 0,
-            )
-
-        with col2:
-            st.selectbox(
                 ":blue[🤖 Blue Bot]",
                 bots,
                 key="blue_bot",
@@ -573,6 +555,24 @@ with st.expander("Directives", expanded=True):
             )
             delete_blue_bot = st.button(
                 "Delete Blue Bot",
+                use_container_width=True,
+                disabled=len(bots) == 0,
+            )
+
+        with col2:
+            st.selectbox(
+                ":red[🤖 Red Bot]",
+                bots,
+                key="red_bot",
+                on_change=lambda: on_bot_changed("Red"),
+            )
+            st.text_area(
+                ":red[🤖 Red Directive]",
+                key="red_directive",
+                on_change=lambda: on_directive_changed("Red"),
+            )
+            delete_red_bot = st.button(
+                "Delete Red Bot",
                 use_container_width=True,
                 disabled=len(bots) == 0,
             )
