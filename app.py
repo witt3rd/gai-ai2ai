@@ -233,6 +233,7 @@ if get_config().OPENAI_API_KEY is None:
         icon="🔑",
     )
     st.stop()
+
 #
 # Session state
 #
@@ -291,13 +292,12 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# st.divider()
 # st.write(
 #     "[![Star](https://img.shields.io/github/stars/witt3rd/gai-ai2ai.svg?logo=github&style=social)](https://gitHub.com/witt3rd/gai-ai2ai)"
 #     + "[![Follow](https://img.shields.io/twitter/follow/dt_public?style=social)](https://www.twitter.com/dt_public)"
 # )
 
-tab1, tab2 = st.tabs(["Chat", "About"])
+tab1, tab2 = st.tabs(["Main", "About"])
 
 with tab1:
     with st.expander("Sessions", expanded=True):
@@ -846,7 +846,5 @@ with tab1:
 with tab2:
     with open("README.md", "r") as f:
         readme = f.read()
-    # patch the image references:
-    # e.g., "static/hero.png" -> "./app/static/hero.png"
     readme = readme.replace("static/", "./app/static/")
     st.markdown(readme, unsafe_allow_html=True)
