@@ -8,10 +8,10 @@
   },
   "scenarios": {
     "AI Project": {
-      "first_speaker": "Red",
+      "first_speaker": "Blue",
       "prompt": "Design a system to generate a response (with minimal human input) to RFPs that relate to generative AI software projects for enterprise companies.  These RFPs are asking for proposals for our company to deliver AI software consulting services, including project delivery (i.e., building complete AI systems) to help their business effectively utilize AI to increase their efficiency, productivity, and profits.  We can expect these RFPs to come from many different industries (e.g., transportation, biotechnology, hospitality, entertainment, industrial), which may require us to have specialized domain knowledge.  The RFPs will typically ask for project ideas, project costs and timelines, and should be clear about budgets and intellectual property.",
-      "Red": "AI Customer",
-      "Blue": "AI Expert"
+      "Red": "Knower",
+      "Blue": "Questioner"
     },
     "Q&A": {
       "first_speaker": "Blue",
@@ -20,5 +20,5 @@
       "Blue": "Questioner"
     }
   },
-  "current_scenario_key": "Q&A"
+  "current_scenario_key": "AI Project"
 }
