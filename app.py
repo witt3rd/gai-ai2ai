@@ -282,6 +282,16 @@ def reset_dialog() -> None:
         del st.session_state["memory"]
 
 
+def on_session_changed() -> None:
+    reset_dialog()
+    # st.session_state["current_session_name"] = current_session_name
+    current_session_name = st.session_state["current_session_name"]
+    print(f"Changing to session {current_session_name}")
+    session = session_load(current_session_name, get_config().SESSION_DIR)
+    scenario_library_from_session(session)
+    scenario_library_to_session_state()
+
+
 def on_new_session() -> None:
     session = session_from_session_state()
     session_save(session, get_config().SESSION_DIR)
@@ -305,6 +315,13 @@ def on_rename_session() -> None:
     )
     session.name = name
     st.session_state["current_session_name"] = session.name
+
+
+def on_purge_sessions() -> None:
+    current_session = st.session_state["session"]
+    session_purge(get_config().SESSION_DIR, current_session)
+    # not sure why I need to do this, but if I don't, the session list changes
+    st.session_state["current_session_name"] = current_session.name
 
 
 #
@@ -369,21 +386,14 @@ with tab1:
     with st.expander("Sessions", expanded=True):
         session_list = session_dir(get_config().SESSION_DIR)
         session = st.session_state["session"]
-
-        def on_session_changed() -> None:
-            reset_dialog()
-            current_session_name = st.session_state["current_session_name"]
-            session = session_load(current_session_name, get_config().SESSION_DIR)
-            scenario_library_from_session(session)
-            scenario_library_to_session_state()
-
-        st.selectbox(
+        current_session_name = st.selectbox(
             "Sessions",
             session_list,
             label_visibility="collapsed",
             key="current_session_name",
-            on_change=on_session_changed,
         )
+        if current_session_name != session.name:
+            on_session_changed()
 
         tokens = session.tokens if session else 0
         cost = session.cost if session else 0.0
@@ -417,7 +427,7 @@ with tab1:
             st.button(
                 "Cleanup Sessions",
                 use_container_width=True,
-                on_click=lambda: session_purge(get_config().SESSION_DIR, session),
+                on_click=on_purge_sessions,
             )
 
         if rename_session:
@@ -439,8 +449,6 @@ with tab1:
 
     with st.expander("Directives", expanded=True):
         st.markdown("#### Scenario")
-
-        print(f"Current scenario: {st.session_state['current_scenario_key']}")
         scenario_library = st.session_state["scenario_library"]
         scenarios = list(scenario_library["scenarios"])
         bots = list(scenario_library["bots"])
@@ -795,7 +803,7 @@ with tab1:
     #
 
     messages = st.session_state["memory"].chat_history.messages
-    if len(messages) > 1:
+    if len(messages) > 0:
         with st.expander("Chat History", expanded=True):
             messages = st.session_state["memory"].chat_history.messages
             for i in range(len(messages)):
@@ -805,9 +813,10 @@ with tab1:
                     speaker = st.session_state["first_speaker"]
                 else:
                     speaker = other_speaker(st.session_state["first_speaker"])
+                speaker_name = st.session_state[f"{speaker.lower()}_bot"]
                 color = speaker_color(speaker)
                 st.text_area(
-                    f":{color}[{speaker}]",
+                    f":{color}[{speaker_name}]",
                     value=message.content,
                     key=f"chat_history_{i}",
                 )
@@ -840,12 +849,13 @@ with tab1:
 
     with st.form("chat_input"):
         speaker = st.session_state["speaker"]
+        speaker_name = st.session_state[f"{speaker.lower()}_bot"]
         responder = other_speaker(speaker)
         responder_agent = st.session_state[responder]
 
         color = speaker_color(speaker)
         prompt = st.text_area(
-            f":{color}[{speaker}]", value=st.session_state["response"]
+            f":{color}[{speaker_name}]", value=st.session_state["response"]
         )
         submit = st.form_submit_button("Send", use_container_width=True)
 
