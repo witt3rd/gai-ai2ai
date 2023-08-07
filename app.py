@@ -1,6 +1,7 @@
 from datetime import datetime
 import json
 import os
+import re
 from typing import Literal
 
 from langchain.agents import ConversationalChatAgent, load_tools, AgentExecutor
@@ -30,6 +31,7 @@ from session_model import (
     session_transcript_save,
     session_transcript_load,
 )
+from utils import get_valid_filename
 
 
 #
@@ -284,9 +286,7 @@ def reset_dialog() -> None:
 
 def on_session_changed() -> None:
     reset_dialog()
-    # st.session_state["current_session_name"] = current_session_name
     current_session_name = st.session_state["current_session_name"]
-    print(f"Changing to session {current_session_name}")
     session = session_load(current_session_name, get_config().SESSION_DIR)
     scenario_library_from_session(session)
     scenario_library_to_session_state()
@@ -451,7 +451,9 @@ with tab1:
         st.markdown("#### Scenario")
         scenario_library = st.session_state["scenario_library"]
         scenarios = list(scenario_library["scenarios"])
+        scenarios.sort()
         bots = list(scenario_library["bots"])
+        bots.sort()
 
         def on_scenario_changed() -> None:
             reset_dialog()
@@ -821,12 +823,12 @@ with tab1:
                     key=f"chat_history_{i}",
                 )
 
-            if len(messages) > 0:
-                st.button(
-                    "Clear Chat History",
-                    use_container_width=True,
-                    on_click=st.session_state["memory"].clear,
-                )
+            # if len(messages) > 0:
+            #     st.button(
+            #         "Clear Chat History",
+            #         use_container_width=True,
+            #         on_click=st.session_state["memory"].clear,
+            #     )
 
         with st.expander("Transcript", expanded=False):
             st.button(
@@ -862,7 +864,11 @@ with tab1:
         memory = st.session_state["memory"]
         session = memory.session
         if submit:
-            memory.add_message(speaker, prompt)
+            if len(memory.chat_history.messages) > 0:
+                last_message = memory.chat_history.messages[-1]
+                last_message.content = prompt
+            else:
+                memory.add_message(speaker, prompt)
             with st.spinner("Thinking..."):
                 st_callback = StreamlitCallbackHandler(st.container())
                 with get_openai_callback() as cb:
@@ -878,9 +884,20 @@ with tab1:
                             raise e
                         response = response.removeprefix(prefix)
 
+                    if type(response) == dict:
+                        # pretty print the response
+                        response = json.dumps(response, indent=2)
+                    else:
+                        if response.startswith("```json"):
+                            response = response.removeprefix("```json").removesuffix(
+                                "```"
+                            )
+                            response = json.loads(response, strict=False)
+                            response = response["action_input"]
                     session.tokens += cb.total_tokens
                     session.cost += cb.total_cost
 
+                memory.add_message(responder, response)
                 st.session_state["response"] = response
                 st.session_state["speaker"] = responder
 
