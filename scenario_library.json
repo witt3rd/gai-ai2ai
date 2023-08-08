@@ -18,14 +18,14 @@
     },
     "Q&A": {
       "first_speaker": "Blue",
-      "prompt": "Why did the chicken cross the road?",
+      "prompt": "What is the latest news on LK-99 and RTAP superconductors?",
       "Red": "Knower",
       "Blue": "Questioner"
     },
     "AI Alignment": {
       "first_speaker": "Red",
       "Red": "Anti AI Alignment",
-      "Blue": "Critic",
+      "Blue": "Pro AI Alignment",
       "prompt": "In the grand scheme of human innovation, dwelling on the AI alignment problem is nothing more than fear-driven speculation that stifles progress and obstructs the life-changing benefits that advanced artificial intelligence is poised to deliver."
     },
     "Actor/Critic": {
@@ -35,5 +35,5 @@
       "prompt": "Organize a business dinner with technical executives from our client companies who are interested in adopting generative artificial intelligence into their businesses.  We have limited space (~12 people), so some level of prequalification should be performed.  The venue should be suitable for executives and allow us to share a presentation/demonstration of emerging technologies."
     }
   },
-  "current_scenario_key": "Actor/Critic"
+  "current_scenario_key": "AI Alignment"
 }

@@ -130,6 +130,7 @@ class SessionMemory(BaseMemory):
     def session_close(self) -> None:
         if len(self.session.messages) > 1:
             session_save(self.session, get_config().SESSION_DIR)
+            self.session.messages = []
         # session_purge(get_config().SESSION_DIR, self.session)
 
 
@@ -256,20 +257,7 @@ def session_from_session_state(
 
 
 def reset_dialog() -> None:
-    # commit the final response, if possible
-    if (
-        "speaker" in st.session_state
-        and "response" in st.session_state
-        and "memory" in st.session_state
-    ):
-        speaker = st.session_state["speaker"]
-        response = st.session_state["response"]
-        prompt = st.session_state["prompt"]
-        if response != prompt:
-            memory = st.session_state["memory"]
-            memory.add_message(speaker, response)
-
-    # clean up session state
+    print("Resetting dialog")
     if "speaker" in st.session_state:
         del st.session_state["speaker"]
     if "Red" in st.session_state:
@@ -762,6 +750,7 @@ with tab1:
         st.session_state["llm"] = llm
 
     if "memory" not in st.session_state:
+        print("Creating memory")
         memory = (
             SessionMemory(
                 scenario=st.session_state["current_scenario_key"],
@@ -775,6 +764,7 @@ with tab1:
             else SessionMemory(session=st.session_state["session"])
         )
         st.session_state["memory"] = memory
+        print(f"History: {memory.chat_history.messages}")
 
     def create_agent(name: str) -> None:
         directive = (
@@ -807,7 +797,6 @@ with tab1:
     messages = st.session_state["memory"].chat_history.messages
     if len(messages) > 0:
         with st.expander("Chat History", expanded=True):
-            messages = st.session_state["memory"].chat_history.messages
             for i in range(len(messages)):
                 message = messages[i]
 
@@ -822,13 +811,6 @@ with tab1:
                     value=message.content,
                     key=f"chat_history_{i}",
                 )
-
-            # if len(messages) > 0:
-            #     st.button(
-            #         "Clear Chat History",
-            #         use_container_width=True,
-            #         on_click=st.session_state["memory"].clear,
-            #     )
 
         with st.expander("Transcript", expanded=False):
             st.button(
